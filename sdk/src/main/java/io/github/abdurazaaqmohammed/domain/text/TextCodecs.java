@@ -18,11 +18,12 @@ public final class TextCodecs {
     }
 
     public static String urlEncode(String s) throws Exception {
-        return URLEncoder.encode(s, StandardCharsets.UTF_8);
+        // The Charset overload is API 33; the String overload works back to API 1.
+        return URLEncoder.encode(s, StandardCharsets.UTF_8.name());
     }
 
     public static String urlDecode(String s) throws Exception {
-        return URLDecoder.decode(s, StandardCharsets.UTF_8);
+        return URLDecoder.decode(s, StandardCharsets.UTF_8.name());
     }
 
     public static String binaryEncode(String s) {

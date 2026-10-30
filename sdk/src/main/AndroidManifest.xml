@@ -1,2 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ToolViewFactory haptics: declared here so the library is self-contained
+         and lint can see the permission at the call site. The host app already
+         requests it, so manifest merging adds nothing new. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+</manifest>
