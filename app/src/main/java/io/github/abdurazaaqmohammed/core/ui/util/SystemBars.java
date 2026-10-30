@@ -10,29 +10,28 @@ import android.view.Window;
 import android.view.WindowManager;
 
 import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import io.github.abdurazaaqmohammed.core.ui.theme.BuiltInThemes;
 import io.github.abdurazaaqmohammed.core.ui.theme.ThemeRegistry;
 
 /**
- * Global system-bar treatment, applied to every activity from
+ * Global immersive system-bar treatment, applied to every activity from
  * {@code App}'s activity lifecycle callbacks and to dialogs at their own
- * show/onStart entry points, so screens that do not extend BaseActivity and
- * the windows floating above them get the same look.
+ * show/onStart entry points.
  *
- * <p>The navigation bar becomes transparent and loses the system contrast
- * scrim, so the window background (for a dialog: the activity underneath it)
- * shows through continuously instead of a separately tinted strip. Icon
- * appearance follows the active MP Manager theme rather than the system dark
- * mode, because the app can run Light on a dark system (and Black on a light
- * one).
+ * <p>The navigation bar is hidden in sticky-immersive mode: content owns the
+ * whole bottom edge, and a swipe from the bottom edge reveals the transient
+ * bar again. That is the only treatment that keeps working on Android 15+,
+ * where {@code Window#setNavigationBarColor} is ignored once the platform
+ * enforces edge-to-edge — a merely transparent bar then falls back to the
+ * window background and still reads as a black strip.
  *
- * <p>Below API 26 the navigation bar keeps its opaque theme colour: light
- * navigation icons only exist from O onwards, so a transparent bar would leave
- * them invisible on a light background. Dialog windows get the same treatment
- * from {@code values-v26/styles.xml}. Nothing changes there compared to the
- * previous behaviour.
+ * <p>While the transient bar is visible its colour is still transparent with
+ * no divider and no contrast scrim, and the icon brightness follows the active
+ * MP Manager theme rather than the system dark mode (the app can run Light on
+ * a dark system, and Black on a light one).
  */
 public final class SystemBars {
 
@@ -40,9 +39,9 @@ public final class SystemBars {
     }
 
     /**
-     * Immersive navigation bar for one activity window. Safe to call repeatedly
+     * Immersive bars for one activity window. Safe to call repeatedly
      * (onCreate/onResume/window-focus), and deliberately cheap: it only writes
-     * window flags and colours, never layout.
+     * window flags and insets-controller state, never layout.
      */
     public static void applyImmersiveNavigationBar(Activity activity) {
         if (activity == null || activity.isFinishing()) return;
@@ -52,10 +51,10 @@ public final class SystemBars {
     }
 
     /**
-     * Immersive navigation bar for one dialog window: AlertDialogs,
-     * DialogFragments, BottomSheetDialogs and custom dialogs all own a window
-     * whose navigation bar is painted from that window's attributes, so the
-     * activity-level treatment never reaches them on its own.
+     * Immersive bars for one dialog window: AlertDialogs, DialogFragments,
+     * BottomSheetDialogs and custom dialogs all own a window whose system bars
+     * are painted from that window's attributes, so the activity-level
+     * treatment never reaches them on its own.
      */
     public static void applyImmersiveNavigationBar(Dialog dialog) {
         if (dialog == null) return;
@@ -83,29 +82,33 @@ public final class SystemBars {
 
     private static void apply(Window window, boolean lightBars) {
         if (window == null) return;
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            // API 23-25 only render white navigation icons, so a transparent bar
-            // would be invisible over light content. Keep the theme colour.
-            return;
-        }
 
-        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-        window.setNavigationBarColor(Color.TRANSPARENT);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            // The divider is drawn as a hairline on top of the bar; drop it so the
-            // transparent bar does not turn into a visible line.
-            window.setNavigationBarDividerColor(Color.TRANSPARENT);
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 10+ dims the bar to keep contrast against app content. That
-            // scrim is exactly what makes an otherwise transparent bar look like a
-            // solid strip, so it must be off for the immersive look.
-            window.setNavigationBarContrastEnforced(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            window.setNavigationBarColor(Color.TRANSPARENT);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                // The divider is drawn as a hairline on top of the bar; drop it so
+                // the transient bar does not turn into a visible line.
+                window.setNavigationBarDividerColor(Color.TRANSPARENT);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10+ dims the bar to keep contrast against app content.
+                // That scrim is exactly what makes a transparent bar read as a
+                // solid strip, so it must be off.
+                window.setNavigationBarContrastEnforced(false);
+            }
         }
 
         WindowInsetsControllerCompat controller =
                 WindowCompat.getInsetsController(window, window.getDecorView());
-        if (controller != null) {
+        if (controller == null) return;
+
+        // Sticky immersive: bars stay hidden, a bottom-edge swipe shows them
+        // transiently and they hide themselves again.
+        controller.setSystemBarsBehavior(
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        controller.hide(WindowInsetsCompat.Type.navigationBars());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             controller.setAppearanceLightNavigationBars(lightBars);
         }
     }
