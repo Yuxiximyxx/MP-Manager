@@ -1,18 +1,26 @@
 package io.github.abdurazaaqmohammed.features.files;
 
+import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Parcelable;
+import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
+import android.text.TextWatcher;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -22,6 +30,9 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.apk.axml.ResourceTableParser;
+import com.apk.axml.aXMLDecoder;
+import com.apk.axml.serializableItems.ResEntry;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -30,9 +41,11 @@ import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.adapters.main.MainFilesArrayAdapter;
 import io.github.abdurazaaqmohammed.domain.files.ContentHit;
 import io.github.abdurazaaqmohammed.domain.files.FileSearch;
+import io.github.abdurazaaqmohammed.domain.files.ZipEntryInfo;
 import io.github.abdurazaaqmohammed.ui.UiFields;
 import io.github.abdurazaaqmohammed.ui.activities.TextEditorActivity;
 import io.github.abdurazaaqmohammed.utils.AccessManager;
+import io.github.abdurazaaqmohammed.utils.KeyboardUtil;
 import io.github.abdurazaaqmohammed.utils.ProgressManager;
 import io.github.abdurazaaqmohammed.utils.SearchHistoryDropdown;
 import io.github.abdurazaaqmohammed.utils.SearchHistoryHelper;
@@ -47,8 +60,12 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * File search + find-in-files dialogs extracted from MainActivity.
@@ -62,20 +79,25 @@ public class FileSearchController {
     private boolean lastSearchIsPane1 = true;
     private Parcelable searchResultsScrollState = null;
 
+    private List<ZipEntryInfo> lastZipResults = null;
+    private File lastZipFile = null;
+    private String lastZipSubPath = null;
+
     private List<ContentHit> lastXmlHits = null;
     private String lastXmlQuery = null;
     private boolean lastXmlRegex = false;
     private boolean lastXmlMatchCase = false;
-    private enum SearchType { NONE, REGULAR, XML }
+    private enum SearchType { NONE, REGULAR, ZIP, XML }
     private SearchType lastSearchType = SearchType.NONE;
 
     public boolean hasSearchResults() {
         return (lastSearchType == SearchType.REGULAR && lastSearchResults != null && !lastSearchResults.isEmpty())
+                || (lastSearchType == SearchType.ZIP && lastZipResults != null && !lastZipResults.isEmpty())
                 || (lastSearchType == SearchType.XML && lastXmlHits != null && !lastXmlHits.isEmpty());
     }
 
     public File getLastSearchStartDir() {
-        return lastSearchStartDir;
+        return lastSearchStartDir != null ? lastSearchStartDir : lastZipFile;
     }
 
     private AlertDialog activeSearchDialog = null;
@@ -92,6 +114,9 @@ public class FileSearchController {
     public void clearLastSearchResults() {
         lastSearchResults = null;
         lastSearchStartDir = null;
+        lastZipResults = null;
+        lastZipFile = null;
+        lastZipSubPath = null;
         lastXmlHits = null;
         lastXmlQuery = null;
         lastSearchType = SearchType.NONE;
@@ -108,10 +133,14 @@ public class FileSearchController {
     public void showLastSearchResultsDialog() {
         if (lastSearchType == SearchType.XML && lastXmlHits != null && !lastXmlHits.isEmpty()) {
             showContentHitsDialog(lastXmlHits, lastXmlQuery, lastXmlRegex, lastXmlMatchCase);
+        } else if (lastSearchType == SearchType.ZIP && lastZipResults != null && !lastZipResults.isEmpty()) {
+            showZipSearchResultsDialog(lastZipFile, lastZipSubPath, lastZipResults, lastSearchIsPane1);
         } else if (lastSearchType == SearchType.REGULAR && lastSearchResults != null && !lastSearchResults.isEmpty()) {
             showSearchResultsDialog(lastSearchStartDir, lastSearchResults, lastSearchIsPane1);
         } else if (lastXmlHits != null && !lastXmlHits.isEmpty()) {
             showContentHitsDialog(lastXmlHits, lastXmlQuery, lastXmlRegex, lastXmlMatchCase);
+        } else if (lastZipResults != null && !lastZipResults.isEmpty()) {
+            showZipSearchResultsDialog(lastZipFile, lastZipSubPath, lastZipResults, lastSearchIsPane1);
         } else if (lastSearchResults != null && !lastSearchResults.isEmpty()) {
             showSearchResultsDialog(lastSearchStartDir, lastSearchResults, lastSearchIsPane1);
         }
@@ -184,9 +213,11 @@ public class FileSearchController {
         dialog.setOnShowListener(d -> {
             searchQuery.requestFocus();
             try {
-                android.view.inputmethod.InputMethodManager imm =
-                        (android.view.inputmethod.InputMethodManager) activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
-                if (imm != null) imm.showSoftInput(searchQuery, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+                if (dialog.getWindow() != null)
+                    dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+                InputMethodManager imm =
+                        (InputMethodManager) activity.getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null) imm.showSoftInput(searchQuery, InputMethodManager.SHOW_IMPLICIT);
             } catch (Exception ignored) {
             }
             Button positiveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
@@ -232,7 +263,15 @@ public class FileSearchController {
             return;
         }
         if (adapter.isInZip) {
-            Extensions.showMessage(activity, R.string.search_zip_unsupported);
+            File zipFile = null;
+            if (adapter.values != null && adapter.values.length > 0 && adapter.values[0] instanceof ZipEntryInfo) {
+                zipFile = ((ZipEntryInfo) adapter.values[0]).getZipFile();
+            }
+            if (zipFile == null) {
+                Extensions.showMessage(activity, R.string.search_zip_unsupported);
+                return;
+            }
+            executeZipSearch(zipFile, adapter.currentZipPath, query, subfolders, mCase, regex, textInside, minSize, maxSize, isPane1);
             return;
         }
         if (regex) {
@@ -396,8 +435,49 @@ public class FileSearchController {
         lastSearchIsPane1 = isPane1;
         lastSearchType = SearchType.REGULAR;
 
+        List<File> allResults = new ArrayList<>(results);
+        List<File> filteredResults = new ArrayList<>(results);
+
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout header = new LinearLayout(activity);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        int pad = dp(16);
+        header.setPadding(pad, pad, pad, dp(8));
+
+        TextView titleText = new TextView(activity);
+        titleText.setText("search results (" + filteredResults.size() + ")");
+        titleText.setTextSize(18);
+        titleText.setTypeface(null, Typeface.BOLD);
+        titleText.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+        header.addView(titleText);
+
+        ImageButton filterBtn = new ImageButton(activity, null, android.R.attr.borderlessButtonStyle);
+        filterBtn.setImageResource(R.drawable.baseline_search_24);
+        filterBtn.setContentDescription(activity.getString(R.string.filter));
+        header.addView(filterBtn);
+        root.addView(header);
+
+        EditText searchInput = new EditText(activity);
+        searchInput.setHint(activity.getString(R.string.filter));
+        searchInput.setSingleLine(true);
+        searchInput.setCompoundDrawablesWithIntrinsicBounds(R.drawable.baseline_search_24, 0, 0, 0);
+        searchInput.setCompoundDrawablePadding(dp(8));
+        searchInput.setPadding(pad, dp(8), pad, dp(8));
+        searchInput.setVisibility(View.GONE);
+        root.addView(searchInput);
+
+        filterBtn.setOnClickListener(v -> {
+            if (searchInput.getVisibility() == View.VISIBLE) {
+                searchInput.setVisibility(View.GONE);
+                searchInput.setText("");
+            } else {
+                searchInput.setVisibility(View.VISIBLE);
+                searchInput.requestFocus();
+            }
+        });
 
         RecyclerView list = new RecyclerView(activity);
         list.setLayoutManager(new LinearLayoutManager(activity));
@@ -408,9 +488,8 @@ public class FileSearchController {
 
         LinearLayout bottomBar = new LinearLayout(activity);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        int pad = dp(12);
-        bottomBar.setPadding(pad, dp(4), pad, dp(4));
+        bottomBar.setGravity(Gravity.CENTER_VERTICAL);
+        bottomBar.setPadding(dp(12), dp(4), dp(12), dp(4));
 
         Button expandBtn = new Button(activity, null, android.R.attr.borderlessButtonStyle);
         expandBtn.setText("⤢ Open in Pane");
@@ -435,7 +514,6 @@ public class FileSearchController {
         root.addView(bottomBar);
 
         AlertDialog dialog = activity.dialogUtil.getDialogBuilder()
-                .setTitle("search results (" + results.size() + ")")
                 .setView(root)
                 .create();
 
@@ -469,13 +547,13 @@ public class FileSearchController {
             dialog.dismiss();
         });
 
-        list.setAdapter(new RecyclerView.Adapter<>() {
+        RecyclerView.Adapter<?> adapter = new RecyclerView.Adapter<>() {
             @NonNull
             @Override
             public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
                 LinearLayout row = new LinearLayout(activity);
                 row.setOrientation(LinearLayout.HORIZONTAL);
-                row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
                 row.setPadding(dp(16), dp(8), dp(16), dp(8));
 
                 ImageView icon = new ImageView(activity);
@@ -500,7 +578,7 @@ public class FileSearchController {
 
                 TextView sub = new TextView(activity);
                 sub.setTextSize(12);
-                sub.setTextColor(android.graphics.Color.GRAY);
+                sub.setTextColor(Color.GRAY);
                 sub.setSingleLine(true);
                 sub.setEllipsize(TextUtils.TruncateAt.START);
                 textCol.addView(sub);
@@ -511,7 +589,7 @@ public class FileSearchController {
 
             @Override
             public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
-                File f = results.get(position);
+                File f = filteredResults.get(position);
                 LinearLayout row = (LinearLayout) holder.itemView;
                 ImageView icon = (ImageView) row.getChildAt(0);
                 LinearLayout textCol = (LinearLayout) row.getChildAt(1);
@@ -535,10 +613,10 @@ public class FileSearchController {
                         activity.setSelectedPane(isPane1 ? 1 : 2);
                         activity.loadFolderInPaneAsync(f, isPane1);
                     } else {
-                        MainFilesArrayAdapter adapter = activity.getCurrentFilesAdapter();
-                        if (adapter == null) adapter = activity.paneFilesAdapter(isPane1);
-                        if (adapter != null && adapter.getFileOpener() != null) {
-                            adapter.getFileOpener().handleFileClick(f, f.getName());
+                        MainFilesArrayAdapter a = activity.getCurrentFilesAdapter();
+                        if (a == null) a = activity.paneFilesAdapter(isPane1);
+                        if (a != null && a.getFileOpener() != null) {
+                            a.getFileOpener().handleFileClick(f, f.getName());
                         }
                     }
                 });
@@ -546,7 +624,25 @@ public class FileSearchController {
 
             @Override
             public int getItemCount() {
-                return results.size();
+                return filteredResults.size();
+            }
+        };
+        list.setAdapter(adapter);
+
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                String q = s != null ? s.toString().trim().toLowerCase(Locale.ROOT) : "";
+                filteredResults.clear();
+                for (File f : allResults) {
+                    if (q.isEmpty() || f.getName().toLowerCase(Locale.ROOT).contains(q)
+                            || (f.getParent() != null && f.getParent().toLowerCase(Locale.ROOT).contains(q))) {
+                        filteredResults.add(f);
+                    }
+                }
+                titleText.setText("search results (" + filteredResults.size() + ")");
+                adapter.notifyDataSetChanged();
             }
         });
 
@@ -574,18 +670,392 @@ public class FileSearchController {
         pane.setAdapter(adapter);
     }
 
+    private void executeZipSearch(File zipFile, String currentSubPath, String query,
+            boolean subfolders, boolean mCase, boolean regex, String textInside,
+            long minSize, long maxSize, boolean isPane1) {
+        if (regex) {
+            try {
+                Pattern.compile(query, mCase ? 0 : Pattern.CASE_INSENSITIVE);
+            } catch (Exception e) {
+                Extensions.showMessage(activity, R.string.invalid_regex);
+                return;
+            }
+        }
+
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(activity);
+        builder.setTitle(activity.rss.getString(R.string.searching));
+
+        LinearLayout layout = new LinearLayout(activity);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (18 * activity.getResources().getDisplayMetrics().density + 0.5f);
+        layout.setPadding(pad, pad / 2, pad, pad / 2);
+
+        TextView folderView = new TextView(activity);
+        folderView.setEllipsize(TextUtils.TruncateAt.START);
+        folderView.setSingleLine(true);
+        folderView.setText(zipFile.getName() + (currentSubPath != null ? "!" + currentSubPath : ""));
+        folderView.setTextSize(13);
+        layout.addView(folderView);
+
+        TextView checkingView = new TextView(activity);
+        checkingView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        checkingView.setSingleLine(true);
+        checkingView.setText("...");
+        checkingView.setTextSize(12);
+        checkingView.setPadding(0, 8, 0, 8);
+        layout.addView(checkingView);
+
+        TextView countView = new TextView(activity);
+        countView.setText("Found: 0");
+        countView.setTextSize(14);
+        countView.setTypeface(null, Typeface.BOLD);
+        layout.addView(countView);
+
+        TextView previewView = new TextView(activity);
+        previewView.setTextSize(12);
+        previewView.setMaxLines(5);
+        previewView.setEllipsize(TextUtils.TruncateAt.END);
+        previewView.setPadding(0, 8, 0, 0);
+        layout.addView(previewView);
+
+        builder.setView(layout);
+        builder.setCancelable(false);
+
+        boolean[] cancelled = {false};
+        boolean[] stopped = {false};
+
+        builder.setPositiveButton("Stop", (d, which) -> {
+            stopped[0] = true;
+            cancelled[0] = true;
+        });
+
+        builder.setNegativeButton(android.R.string.cancel, (d, which) -> {
+            cancelled[0] = true;
+        });
+
+        AlertDialog progressDialog = builder.create();
+        progressDialog.show();
+
+        List<String> matchedNames = new ArrayList<>();
+        long[] lastUiUpdate = {0};
+
+        new Thread(() -> {
+            List<ZipEntryInfo> results = FileSearch.searchZipEntries(zipFile, currentSubPath, query,
+                    subfolders, mCase, regex, textInside, minSize, maxSize,
+                    new FileSearch.SearchCallback() {
+                        @Override
+                        public void onFolderEntered(File folder) {
+                            long now = System.currentTimeMillis();
+                            if (now - lastUiUpdate[0] > 100) {
+                                lastUiUpdate[0] = now;
+                                String path = folder.getPath();
+                                activity.handler.post(() -> folderView.setText(path));
+                            }
+                        }
+
+                        @Override
+                        public void onFileChecking(File file) {
+                            long now = System.currentTimeMillis();
+                            if (now - lastUiUpdate[0] > 100) {
+                                lastUiUpdate[0] = now;
+                                String name = file.getName();
+                                activity.handler.post(() -> checkingView.setText(name));
+                            }
+                        }
+
+                        @Override
+                        public void onFileFound(File file, int totalFound) {
+                            synchronized (matchedNames) {
+                                if (matchedNames.size() < 10) {
+                                    matchedNames.add(file.getName());
+                                } else {
+                                    matchedNames.remove(0);
+                                    matchedNames.add(file.getName());
+                                }
+                                StringBuilder sb = new StringBuilder();
+                                for (String n : matchedNames) {
+                                    if (sb.length() > 0) sb.append("\n");
+                                    sb.append("• ").append(n);
+                                }
+                                String preview = sb.toString();
+                                activity.handler.post(() -> {
+                                    countView.setText("Found: " + totalFound);
+                                    previewView.setText(preview);
+                                });
+                            }
+                        }
+
+                        @Override
+                        public boolean isCancelled() {
+                            return cancelled[0];
+                        }
+                    });
+
+            activity.handler.post(() -> {
+                try {
+                    progressDialog.dismiss();
+                } catch (Exception ignored) {
+                }
+
+                if (cancelled[0] && !stopped[0]) {
+                    return;
+                }
+
+                if (results.isEmpty()) {
+                    Extensions.showMessage(activity, R.string.no_files_found);
+                } else {
+                    lastZipResults = results;
+                    lastZipFile = zipFile;
+                    lastZipSubPath = currentSubPath;
+                    lastSearchIsPane1 = isPane1;
+                    showZipSearchResultsDialog(zipFile, currentSubPath, results, isPane1);
+                }
+            });
+        }).start();
+    }
+
+    public void showZipSearchResultsDialog(File zipFile, String currentSubPath, List<ZipEntryInfo> results, boolean isPane1) {
+        lastZipResults = results;
+        lastZipFile = zipFile;
+        lastZipSubPath = currentSubPath;
+        lastSearchIsPane1 = isPane1;
+        lastSearchType = SearchType.ZIP;
+
+        List<ZipEntryInfo> allResults = new ArrayList<>(results);
+        List<ZipEntryInfo> filteredResults = new ArrayList<>(results);
+
+        LinearLayout root = new LinearLayout(activity);
+        root.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout header = new LinearLayout(activity);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        int pad = dp(16);
+        header.setPadding(pad, pad, pad, dp(8));
+
+        TextView titleText = new TextView(activity);
+        titleText.setText("search results (" + filteredResults.size() + ")");
+        titleText.setTextSize(18);
+        titleText.setTypeface(null, Typeface.BOLD);
+        titleText.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+        header.addView(titleText);
+
+        ImageButton filterBtn = new ImageButton(activity, null, android.R.attr.borderlessButtonStyle);
+        filterBtn.setImageResource(R.drawable.baseline_search_24);
+        filterBtn.setContentDescription(activity.getString(R.string.filter));
+        header.addView(filterBtn);
+        root.addView(header);
+
+        EditText searchInput = new EditText(activity);
+        searchInput.setHint(activity.getString(R.string.filter));
+        searchInput.setSingleLine(true);
+        searchInput.setCompoundDrawablesWithIntrinsicBounds(R.drawable.baseline_search_24, 0, 0, 0);
+        searchInput.setCompoundDrawablePadding(dp(8));
+        searchInput.setPadding(pad, dp(8), pad, dp(8));
+        searchInput.setVisibility(View.GONE);
+        root.addView(searchInput);
+
+        filterBtn.setOnClickListener(v -> {
+            if (searchInput.getVisibility() == View.VISIBLE) {
+                searchInput.setVisibility(View.GONE);
+                searchInput.setText("");
+            } else {
+                searchInput.setVisibility(View.VISIBLE);
+                searchInput.requestFocus();
+            }
+        });
+
+        RecyclerView list = new RecyclerView(activity);
+        list.setLayoutManager(new LinearLayoutManager(activity));
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
+        list.setLayoutParams(listParams);
+        root.addView(list);
+
+        LinearLayout bottomBar = new LinearLayout(activity);
+        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
+        bottomBar.setGravity(Gravity.CENTER_VERTICAL);
+        bottomBar.setPadding(dp(12), dp(4), dp(12), dp(4));
+
+        View spacer = new View(activity);
+        LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(0, 1, 1.0f);
+        spacer.setLayoutParams(spacerLp);
+        bottomBar.addView(spacer);
+
+        Button clearBtn = new Button(activity, null, android.R.attr.borderlessButtonStyle);
+        clearBtn.setText("CLEAR");
+        clearBtn.setTextSize(13);
+        bottomBar.addView(clearBtn);
+
+        Button closeBtn = new Button(activity, null, android.R.attr.borderlessButtonStyle);
+        closeBtn.setText("CLOSE");
+        closeBtn.setTextSize(13);
+        bottomBar.addView(closeBtn);
+
+        root.addView(bottomBar);
+
+        AlertDialog dialog = activity.dialogUtil.getDialogBuilder()
+                .setView(root)
+                .create();
+
+        activeSearchDialog = dialog;
+        shouldRestoreSearchDialogOnResume = true;
+
+        dialog.setOnDismissListener(d -> {
+            if (activeSearchDialog == dialog) {
+                activeSearchDialog = null;
+            }
+        });
+
+        clearBtn.setOnClickListener(v -> {
+            shouldRestoreSearchDialogOnResume = false;
+            searchResultsScrollState = null;
+            clearLastSearchResults();
+            dialog.dismiss();
+        });
+
+        closeBtn.setOnClickListener(v -> {
+            shouldRestoreSearchDialogOnResume = false;
+            if (list.getLayoutManager() != null) {
+                searchResultsScrollState = list.getLayoutManager().onSaveInstanceState();
+            }
+            dialog.dismiss();
+        });
+
+        RecyclerView.Adapter<?> adapter = new RecyclerView.Adapter<>() {
+            @NonNull
+            @Override
+            public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+                LinearLayout row = new LinearLayout(activity);
+                row.setLayoutParams(new RecyclerView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(16), dp(8), dp(16), dp(8));
+
+                ImageView icon = new ImageView(activity);
+                LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(28), dp(28));
+                icon.setLayoutParams(iconLp);
+                icon.setImageResource(R.drawable.baseline_search_24);
+                row.addView(icon);
+
+                LinearLayout textCol = new LinearLayout(activity);
+                textCol.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                textLp.setMarginStart(dp(12));
+                textCol.setLayoutParams(textLp);
+
+                TextView title = new TextView(activity);
+                title.setTextSize(14);
+                title.setTypeface(null, Typeface.BOLD);
+                title.setSingleLine(true);
+                title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+                textCol.addView(title);
+
+                TextView sub = new TextView(activity);
+                sub.setTextSize(12);
+                sub.setTextColor(Color.GRAY);
+                sub.setSingleLine(true);
+                sub.setEllipsize(TextUtils.TruncateAt.START);
+                textCol.addView(sub);
+
+                row.addView(textCol);
+                return new RecyclerView.ViewHolder(row) {};
+            }
+
+            @Override
+            public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
+                ZipEntryInfo entry = filteredResults.get(position);
+                LinearLayout row = (LinearLayout) holder.itemView;
+                ImageView icon = (ImageView) row.getChildAt(0);
+                LinearLayout textCol = (LinearLayout) row.getChildAt(1);
+                TextView title = (TextView) textCol.getChildAt(0);
+                TextView sub = (TextView) textCol.getChildAt(1);
+
+                title.setText(entry.getName());
+                sub.setText(entry.getFullPath());
+                if (entry.isDirectory()) {
+                    icon.setImageResource(R.drawable.folder_24px);
+                } else {
+                    icon.setImageResource(R.drawable.ic_link_24);
+                }
+
+                row.setOnClickListener(v -> {
+                    if (list.getLayoutManager() != null) {
+                        searchResultsScrollState = list.getLayoutManager().onSaveInstanceState();
+                    }
+                    if (entry.isDirectory()) {
+                        activity.clearGreen(isPane1);
+                        activity.setSelectedPane(isPane1 ? 1 : 2);
+                        activity.loadZipFolderInPane(entry.getZipFile(), entry.getFullPath(), isPane1, false);
+                    } else {
+                        MainFilesArrayAdapter a = activity.getCurrentFilesAdapter();
+                        if (a == null) a = activity.paneFilesAdapter(isPane1);
+                        if (a != null && a.getFileOperations() != null) {
+                            a.getFileOperations().handleZipEntryClick(entry);
+                        }
+                    }
+                });
+            }
+
+            @Override
+            public int getItemCount() {
+                return filteredResults.size();
+            }
+        };
+        list.setAdapter(adapter);
+
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                String q = s != null ? s.toString().trim().toLowerCase(Locale.ROOT) : "";
+                filteredResults.clear();
+                for (ZipEntryInfo entry : allResults) {
+                    if (q.isEmpty() || entry.getName().toLowerCase(Locale.ROOT).contains(q)
+                            || entry.getFullPath().toLowerCase(Locale.ROOT).contains(q)) {
+                        filteredResults.add(entry);
+                    }
+                }
+                titleText.setText("search results (" + filteredResults.size() + ")");
+                adapter.notifyDataSetChanged();
+            }
+        });
+
+        if (searchResultsScrollState != null) {
+            list.post(() -> {
+                if (list.getLayoutManager() != null && searchResultsScrollState != null) {
+                    list.getLayoutManager().onRestoreInstanceState(searchResultsScrollState);
+                }
+            });
+        }
+
+        activity.dialogUtil.styleAlertDialog(dialog);
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setLayout(
+                    (int) (activity.getResources().getDisplayMetrics().widthPixels * 0.94f),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
     public void showFindInFilesDialog() {
         boolean isPane1 = activity.lastPaneSelected == 1;
         RecyclerView.Adapter a = activity.getCurrentPane().getAdapter();
-        if (!(a instanceof MainFilesArrayAdapter)) {
+        File targetFile = null;
+        if (a instanceof MainFilesArrayAdapter adapter) {
+            if (adapter.isInZip && adapter.values != null && adapter.values.length > 0 && adapter.values[0] instanceof ZipEntryInfo) {
+                targetFile = ((ZipEntryInfo) adapter.values[0]).getZipFile();
+            }
+        }
+        if (targetFile == null) {
+            targetFile = isPane1 ? activity.pane1Folder : activity.pane2Folder;
+        }
+        if (targetFile == null) {
             Extensions.showMessage(activity, R.string.find_needs_folder);
             return;
         }
-        if (((MainFilesArrayAdapter) a).isInZip) {
-            Extensions.showMessage(activity, R.string.find_needs_folder);
-            return;
-        }
-        File startDir = isPane1 ? activity.pane1Folder : activity.pane2Folder;
+        File startDir = targetFile;
         LinearLayout root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (16 * activity.getResources().getDisplayMetrics().density + 0.5f);
@@ -593,6 +1063,10 @@ public class FileSearchController {
         TextInputLayout box = UiFields.box(activity, "Text to find");
         EditText queryInput = UiFields.field(box, InputType.TYPE_CLASS_TEXT);
         root.addView(box);
+        CheckBox cbSubfolders = new CheckBox(activity);
+        cbSubfolders.setText(activity.getString(R.string.search_subfolders));
+        cbSubfolders.setChecked(true);
+        root.addView(cbSubfolders);
         CheckBox cbCase = new CheckBox(activity);
         cbCase.setText(activity.getString(R.string.match_case));
         CheckBox cbRegex = new CheckBox(activity);
@@ -613,13 +1087,13 @@ public class FileSearchController {
                         Extensions.showMessage(activity, R.string.search_query_needed);
                         return;
                     }
-                    runFindInFiles(startDir, q, cbCase.isChecked(), cbRegex.isChecked());
+                    runFindInFiles(startDir, q, cbSubfolders.isChecked(), cbCase.isChecked(), cbRegex.isChecked());
                 }).create();
-        io.github.abdurazaaqmohammed.utils.KeyboardUtil.focusOnShow(findDialog, queryInput, false);
+        KeyboardUtil.focusOnShow(findDialog, queryInput, false);
         findDialog.show();
     }
 
-    private void runFindInFiles(File startDir, String query, boolean matchCase, boolean regex) {
+    private void runFindInFiles(File startDir, String query, boolean subfolders, boolean matchCase, boolean regex) {
         if (regex) {
             try {
                 Pattern.compile(query, matchCase ? 0 : Pattern.CASE_INSENSITIVE);
@@ -631,7 +1105,7 @@ public class FileSearchController {
         ProgressManager pm = new ProgressManager(activity, true).show();
         pm.setText(activity.rss.getString(R.string.searching));
         new Thread(() -> {
-            List<ContentHit> hits = FileSearch.findInFiles(startDir, query, matchCase, regex,
+            List<ContentHit> hits = FileSearch.findInFiles(startDir, query, subfolders, matchCase, regex,
                     scanned -> {
                         if (scanned % 50 == 0 && pm.dialog != null && pm.dialog.isShowing()) {
                             pm.setText(scanned + " files…");
@@ -653,8 +1127,8 @@ public class FileSearchController {
         RecyclerView.Adapter a = activity.getCurrentPane().getAdapter();
         File targetFile = null;
         if (a instanceof MainFilesArrayAdapter adapter) {
-            if (adapter.isInZip && adapter.values != null && adapter.values.length > 0 && adapter.values[0] instanceof io.github.abdurazaaqmohammed.domain.files.ZipEntryInfo) {
-                targetFile = ((io.github.abdurazaaqmohammed.domain.files.ZipEntryInfo) adapter.values[0]).getZipFile();
+            if (adapter.isInZip && adapter.values != null && adapter.values.length > 0 && adapter.values[0] instanceof ZipEntryInfo) {
+                targetFile = ((ZipEntryInfo) adapter.values[0]).getZipFile();
             }
         }
         if (targetFile == null) {
@@ -675,15 +1149,10 @@ public class FileSearchController {
         }
         root.addView(box);
 
-        CheckBox cbCase = new CheckBox(activity);
-        cbCase.setText(activity.getString(R.string.match_case));
-        cbCase.setChecked(lastXmlMatchCase);
-        CheckBox cbRegex = new CheckBox(activity);
-        cbRegex.setText(activity.getString(R.string.regex));
-        cbRegex.setChecked(lastXmlRegex);
-
-        root.addView(cbCase);
-        root.addView(cbRegex);
+        CheckBox cbSubfolders = new CheckBox(activity);
+        cbSubfolders.setText(activity.getString(R.string.search_subfolders));
+        cbSubfolders.setChecked(true);
+        root.addView(cbSubfolders);
 
         AlertDialog xmlDialog = new MaterialAlertDialogBuilder(activity)
                 .setTitle(activity.getString(R.string.xml_search))
@@ -695,13 +1164,13 @@ public class FileSearchController {
                         Extensions.showMessage(activity, R.string.search_query_needed);
                         return;
                     }
-                    runXmlSearch(searchTarget, q, cbCase.isChecked(), cbRegex.isChecked());
+                    runXmlSearch(searchTarget, q, cbSubfolders.isChecked(), false, false);
                 }).create();
-        io.github.abdurazaaqmohammed.utils.KeyboardUtil.focusOnShow(xmlDialog, queryInput, false);
+        KeyboardUtil.focusOnShow(xmlDialog, queryInput, false);
         xmlDialog.show();
     }
 
-    private void runXmlSearch(File searchTarget, String query, boolean matchCase, boolean regex) {
+    private void runXmlSearch(File searchTarget, String query, boolean searchSubfolders, boolean matchCase, boolean regex) {
         if (regex) {
             try {
                 Pattern.compile(query, matchCase ? 0 : Pattern.CASE_INSENSITIVE);
@@ -713,7 +1182,7 @@ public class FileSearchController {
         ProgressManager pm = new ProgressManager(activity, true).show();
         pm.setText(activity.rss.getString(R.string.searching));
         new Thread(() -> {
-            List<ContentHit> hits = FileSearch.searchInXmlFiles(searchTarget, query, matchCase, regex,
+            List<ContentHit> hits = FileSearch.searchInXmlFiles(searchTarget, query, searchSubfolders, matchCase, regex,
                     scanned -> {
                         if (scanned % 50 == 0 && pm.dialog != null && pm.dialog.isShowing()) {
                             pm.setText(scanned + " XML files…");
@@ -755,7 +1224,7 @@ public class FileSearchController {
     }
 
     private void showContentHitsDialog(List<ContentHit> hits, String query, boolean regex, boolean matchCase) {
-        java.util.LinkedHashMap<String, XmlFileGroup> groupsMap = new java.util.LinkedHashMap<>();
+        LinkedHashMap<String, XmlFileGroup> groupsMap = new LinkedHashMap<>();
         for (ContentHit hit : hits) {
             String path = (hit.displayPath() != null && !hit.displayPath().isEmpty()) ? hit.displayPath() : hit.file().getName();
             XmlFileGroup group = groupsMap.get(path);
@@ -765,22 +1234,94 @@ public class FileSearchController {
             }
             group.hits.add(hit);
         }
-        List<XmlFileGroup> groupList = new ArrayList<>(groupsMap.values());
+        List<XmlFileGroup> allGroups = new ArrayList<>(groupsMap.values());
+        List<XmlFileGroup> filteredGroups = new ArrayList<>(allGroups);
+
+        LinearLayout root = new LinearLayout(activity);
+        root.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout header = new LinearLayout(activity);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        int pad = dp(16);
+        header.setPadding(pad, pad, pad, dp(8));
+
+        TextView titleText = new TextView(activity);
+        titleText.setText("search results (" + filteredGroups.size() + ")");
+        titleText.setTextSize(18);
+        titleText.setTypeface(null, Typeface.BOLD);
+        titleText.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
+        header.addView(titleText);
+
+        ImageButton filterBtn = new ImageButton(activity, null, android.R.attr.borderlessButtonStyle);
+        filterBtn.setImageResource(R.drawable.baseline_search_24);
+        filterBtn.setContentDescription(activity.getString(R.string.filter));
+        header.addView(filterBtn);
+        root.addView(header);
+
+        EditText searchInput = new EditText(activity);
+        searchInput.setHint(activity.getString(R.string.filter));
+        searchInput.setSingleLine(true);
+        searchInput.setCompoundDrawablesWithIntrinsicBounds(R.drawable.baseline_search_24, 0, 0, 0);
+        searchInput.setCompoundDrawablePadding(dp(8));
+        searchInput.setPadding(pad, dp(8), pad, dp(8));
+        searchInput.setVisibility(View.GONE);
+        root.addView(searchInput);
+
+        filterBtn.setOnClickListener(v -> {
+            if (searchInput.getVisibility() == View.VISIBLE) {
+                searchInput.setVisibility(View.GONE);
+                searchInput.setText("");
+            } else {
+                searchInput.setVisibility(View.VISIBLE);
+                searchInput.requestFocus();
+            }
+        });
 
         RecyclerView list = new RecyclerView(activity);
         list.setLayoutManager(new LinearLayoutManager(activity));
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
+        list.setLayoutParams(listParams);
+        root.addView(list);
+
+        LinearLayout bottomBar = new LinearLayout(activity);
+        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
+        bottomBar.setGravity(Gravity.CENTER_VERTICAL);
+        bottomBar.setPadding(dp(12), dp(4), dp(12), dp(4));
+
+        View spacer = new View(activity);
+        LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(0, 1, 1.0f);
+        spacer.setLayoutParams(spacerLp);
+        bottomBar.addView(spacer);
+
+        Button clearBtn = new Button(activity, null, android.R.attr.borderlessButtonStyle);
+        clearBtn.setText("CLEAR");
+        clearBtn.setTextSize(13);
+        bottomBar.addView(clearBtn);
+
+        Button closeBtn = new Button(activity, null, android.R.attr.borderlessButtonStyle);
+        closeBtn.setText("CLOSE");
+        closeBtn.setTextSize(13);
+        bottomBar.addView(closeBtn);
+
+        root.addView(bottomBar);
+
         AlertDialog dialog = activity.dialogUtil.getDialogBuilder()
-                .setTitle("search results (" + groupList.size() + ")")
-                .setView(list)
-                .setNegativeButton(R.string.close, (d, w) -> {
-                    shouldRestoreSearchDialogOnResume = false;
-                })
-                .setNeutralButton("CLEAR", (d, w) -> {
-                    shouldRestoreSearchDialogOnResume = false;
-                    lastXmlHits = null;
-                    lastXmlQuery = null;
-                })
+                .setView(root)
                 .create();
+
+        clearBtn.setOnClickListener(v -> {
+            shouldRestoreSearchDialogOnResume = false;
+            lastXmlHits = null;
+            lastXmlQuery = null;
+            dialog.dismiss();
+        });
+
+        closeBtn.setOnClickListener(v -> {
+            shouldRestoreSearchDialogOnResume = false;
+            dialog.dismiss();
+        });
 
         activeSearchDialog = dialog;
         shouldRestoreSearchDialogOnResume = true;
@@ -790,13 +1331,15 @@ public class FileSearchController {
                 activeSearchDialog = null;
             }
         });
-        list.setAdapter(new RecyclerView.Adapter<>() {
+        RecyclerView.Adapter<?> adapter = new RecyclerView.Adapter<>() {
             @NonNull
             @Override
             public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
                 LinearLayout row = new LinearLayout(activity);
+                row.setLayoutParams(new RecyclerView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
                 row.setOrientation(LinearLayout.HORIZONTAL);
-                row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
                 int pad = (int) (12 * activity.getResources().getDisplayMetrics().density + 0.5f);
                 row.setPadding(pad, dp(8), pad, dp(8));
 
@@ -818,13 +1361,13 @@ public class FileSearchController {
                 title.setTextSize(14);
                 title.setTypeface(null, Typeface.BOLD);
                 title.setSingleLine(true);
-                title.setEllipsize(TextUtils.TruncateAt.END);
+                title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
 
                 TextView sub = new TextView(activity);
                 sub.setTextSize(12);
                 sub.setTextColor(0xFF888888);
                 sub.setSingleLine(true);
-                sub.setEllipsize(TextUtils.TruncateAt.END);
+                sub.setEllipsize(TextUtils.TruncateAt.START);
 
                 textCol.addView(title);
                 textCol.addView(sub);
@@ -836,7 +1379,7 @@ public class FileSearchController {
 
             @Override
             public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
-                XmlFileGroup group = groupList.get(position);
+                XmlFileGroup group = filteredGroups.get(position);
                 LinearLayout row = (LinearLayout) holder.itemView;
                 LinearLayout textCol = (LinearLayout) row.getChildAt(1);
                 TextView title = (TextView) textCol.getChildAt(0);
@@ -855,11 +1398,34 @@ public class FileSearchController {
 
             @Override
             public int getItemCount() {
-                return groupList.size();
+                return filteredGroups.size();
+            }
+        };
+        list.setAdapter(adapter);
+
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                String q = s != null ? s.toString().trim().toLowerCase(Locale.ROOT) : "";
+                filteredGroups.clear();
+                for (XmlFileGroup g : allGroups) {
+                    if (q.isEmpty() || g.fileName.toLowerCase(Locale.ROOT).contains(q)
+                            || g.directoryPath.toLowerCase(Locale.ROOT).contains(q)) {
+                        filteredGroups.add(g);
+                    }
+                }
+                titleText.setText("search results (" + filteredGroups.size() + ")");
+                adapter.notifyDataSetChanged();
             }
         });
+
         activity.dialogUtil.styleAlertDialog(dialog);
-        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setLayout(
+                    (int) (activity.getResources().getDisplayMetrics().widthPixels * 0.94f),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
     }
 
     private void openContentHit(ContentHit hit, String query, boolean regex, boolean matchCase) {
@@ -868,8 +1434,17 @@ public class FileSearchController {
                 File target = hit.file();
                 String entryPath = hit.displayPath();
                 Intent intent = new Intent(activity, TextEditorActivity.class);
-                intent.putExtra("search", query);
-                intent.putExtra("searchRegex", regex);
+                String searchQuery = query;
+                boolean isRegex = regex;
+                if (!isRegex && (query.contains("*") || query.contains("?"))) {
+                    Pattern p = FileSearch.compilePattern(query, matchCase, false);
+                    if (p != null) {
+                        searchQuery = p.pattern();
+                        isRegex = true;
+                    }
+                }
+                intent.putExtra("search", searchQuery);
+                intent.putExtra("searchRegex", isRegex);
                 intent.putExtra("searchMatchCase", matchCase);
 
                 boolean isArchive = target.isFile() && (target.getName().toLowerCase().endsWith(".apk")
@@ -877,8 +1452,8 @@ public class FileSearchController {
                         && entryPath != null && !entryPath.isEmpty() && !entryPath.equals(target.getName());
 
                 if (isArchive) {
-                    try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(target)) {
-                        java.util.zip.ZipEntry ze = zf.getEntry(entryPath);
+                    try (ZipFile zf = new ZipFile(target)) {
+                        ZipEntry ze = zf.getEntry(entryPath);
                         if (ze == null) return;
                         File cacheDir = new File(activity.getCacheDir(), "xml_search_" + System.currentTimeMillis());
                         cacheDir.mkdirs();
@@ -901,7 +1476,7 @@ public class FileSearchController {
                         }
                         if (isAxml) {
                             intent.putExtra("axml", true);
-                            java.util.zip.ZipEntry rssEntry = zf.getEntry("resources.arsc");
+                            ZipEntry rssEntry = zf.getEntry("resources.arsc");
                             if (rssEntry != null) {
                                 File tmpRss = new File(cacheDir, "resources.arsc");
                                 try (InputStream ris = zf.getInputStream(rssEntry);
@@ -913,15 +1488,15 @@ public class FileSearchController {
                                 intent.putExtra("rssPath", tmpRss.getAbsolutePath());
                                 try (InputStream is2 = new FileInputStream(tempFile);
                                      InputStream ris2 = new FileInputStream(tmpRss)) {
-                                    com.apk.axml.ResourceTableParser rtp = new com.apk.axml.ResourceTableParser(ris2);
-                                    List<com.apk.axml.serializableItems.ResEntry> entries = rtp.parse();
-                                    com.apk.axml.aXMLDecoder decoder = new com.apk.axml.aXMLDecoder(is2, entries);
+                                    ResourceTableParser rtp = new ResourceTableParser(ris2);
+                                    List<ResEntry> entries = rtp.parse();
+                                    aXMLDecoder decoder = new aXMLDecoder(is2, entries);
                                     intent.putExtra(Intent.EXTRA_TEXT, decoder.decodeAsString().trim());
                                 } catch (Exception ignored) {
                                 }
                             } else {
                                 try (InputStream is2 = new FileInputStream(tempFile)) {
-                                    com.apk.axml.aXMLDecoder decoder = new com.apk.axml.aXMLDecoder(is2);
+                                    aXMLDecoder decoder = new aXMLDecoder(is2);
                                     intent.putExtra(Intent.EXTRA_TEXT, decoder.decodeAsString().trim());
                                 } catch (Exception ignored) {
                                 }
@@ -949,11 +1524,11 @@ public class FileSearchController {
                     } else if (isAxml) {
                         try (InputStream is = FileUtils.getInputStream(file)) {
                             intent.putExtra("axml", true);
-                            intent.putExtra(Intent.EXTRA_TEXT, new com.apk.axml.aXMLDecoder(is).decodeAsString().trim());
+                            intent.putExtra(Intent.EXTRA_TEXT, new aXMLDecoder(is).decodeAsString().trim());
                         } catch (Exception ignored) {}
                     }
                 }
-                activity.runOnUiThread(() -> activity.startActivity(intent));
+                activity.runOnUiThread(() -> activity.startActivityForResult(intent, 757));
             } catch (Exception e) {
                 new ErrorUtil(activity).showError(e);
             }

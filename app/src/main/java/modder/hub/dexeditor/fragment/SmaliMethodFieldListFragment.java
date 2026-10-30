@@ -46,6 +46,7 @@ import modder.hub.dexeditor.views.AlertCircularProgress;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
@@ -287,7 +288,7 @@ public class SmaliMethodFieldListFragment extends DialogFragment {
         // ?attr/colorSurface, which used to resolve to black.
         View root = getView();
         if (root != null) {
-            root.setBackgroundTintList(android.content.res.ColorStateList.valueOf(
+            root.setBackgroundTintList(ColorStateList.valueOf(
                     themeColor(com.google.android.material.R.attr.colorSurface, 0xFFFFFBFE)));
         }
     }
@@ -701,7 +702,7 @@ public class SmaliMethodFieldListFragment extends DialogFragment {
                     DexEditorActivity.classTree.saveSmali(slashClass, newSmali);
                 }
                 try {
-                    String pure = newSmali.replaceFirst("(?s)^#.*?\\n\\n", "");
+                    String pure = SmaliHelper.stripSmaliHeaderUnchecked(newSmali);
                     FileWriter fw = new FileWriter(smaliFilePath);
                     fw.write(pure);
                     fw.close();

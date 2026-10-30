@@ -630,8 +630,16 @@ public class PlayerManager {
             } catch (Exception ignored) {}
         }
         try {
-            Collections.sort(out, (a, b) -> FileSorting.compareNaturalIgnoreCase(a.getName(), b.getName()));
-        } catch (Exception ignored) {}
+            io.github.abdurazaaqmohammed.data.prefs.ListPrefs lp = new io.github.abdurazaaqmohammed.data.prefs.ListPrefs(appContext);
+            String dirPath = dir.getAbsolutePath();
+            File[] arr = out.toArray(new File[0]);
+            FileSorting.sortFiles(arr, lp.sortBy(dirPath), lp.sortReverse(dirPath));
+            out = new ArrayList<>(java.util.Arrays.asList(arr));
+        } catch (Exception ignored) {
+            try {
+                Collections.sort(out, (a, b) -> FileSorting.compareNaturalIgnoreCase(a.getName(), b.getName()));
+            } catch (Exception ignoredInner) {}
+        }
         return out;
     }
 
@@ -656,7 +664,7 @@ public class PlayerManager {
         boolean changed = false;
         if (queue.size() == 1) {
             List<MediaItem> full = new ArrayList<>();
-            for (File s : siblings) full.add(buildMediaItem(appContext, s.getAbsolutePath()));
+            for (File s : siblings) full.add(buildMediaItemFast(s.getAbsolutePath()));
             queue = full;
             currentIndex = posInSiblings;
             if (shuffle) buildShuffleOrder();
@@ -668,7 +676,7 @@ public class PlayerManager {
                 for (MediaItem m : queue) {
                     if (m != null && ap.equals(m.path)) { already = true; break; }
                 }
-                if (!already) { queue.add(buildMediaItem(appContext, ap)); changed = true; }
+                if (!already) { queue.add(buildMediaItemFast(ap)); changed = true; }
             }
         }
         return changed;
@@ -720,7 +728,7 @@ public class PlayerManager {
                         }
                         if (pos > 0) {
                             File prev = siblings.get(pos - 1);
-                            queue.add(0, buildMediaItem(appContext, prev.getAbsolutePath()));
+                            queue.add(0, buildMediaItemFast(prev.getAbsolutePath()));
                             return 0;
                         }
                     }
@@ -774,8 +782,8 @@ public class PlayerManager {
         if (mediaPlayer != null) {
             msec = Math.max(0, msec);
             try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    mediaPlayer.seekTo(msec, android.media.MediaPlayer.SEEK_CLOSEST);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    mediaPlayer.seekTo(msec, MediaPlayer.SEEK_CLOSEST);
                 } else {
                     mediaPlayer.seekTo(msec);
                 }

@@ -28,6 +28,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -254,6 +255,51 @@ public class SignWrapper {
         if (inPlace) {
             finishInPlaceSign(inputApk, actualOutput);
         }
+    }
+
+    /**
+     * Writes the configured signing key + certificate chain into a BKS keystore
+     * the vendored Xposed-patcher engines can consume via their -k option. The
+     * engines sign their (data-multiplexed) output in place with this key; a
+     * post-hoc apksig pass would re-serialize the zip, materialize the engines'
+     * entry links and roughly double the file size.
+     */
+    /**
+     * Writes the configured signing key + certificate chain into a keystore of
+     * the given type that the vendored Xposed-patcher engines can consume via
+     * their -k option. The engines sign their (data-multiplexed) output in
+     * place with this key; a post-hoc apksig pass would re-serialize the zip,
+     * materialize the engines' entry links and roughly double the file size.
+     * The write is verified with a read-back of the same type (the engines read
+     * exactly this way), because BKS/JKS provider support differs per Android
+     * version — e.g. KeyStore.getDefaultType() is JKS on some Android 12
+     * builds but BKS on others.
+     */
+    public void exportKey(File outFile, String storeType, String password, String alias) throws Exception {
+        ApkSigner.SignerConfig config = createSignerConfig();
+        char[] pass = password.toCharArray();
+        KeyStore ks = KeyStore.getInstance(storeType);
+        ks.load(null, null);
+        ks.setKeyEntry(alias, config.getPrivateKey(), pass,
+                config.getCertificates().toArray(new X509Certificate[0]));
+        try (FileOutputStream out = new FileOutputStream(outFile)) {
+            ks.store(out, pass);
+        }
+        // Read-back verification with the same instance type the engine uses.
+        KeyStore check = KeyStore.getInstance(storeType);
+        try (InputStream in = new FileInputStream(outFile)) {
+            check.load(in, pass);
+        }
+        if (check.getEntry(alias, new KeyStore.PasswordProtection(pass)) == null) {
+            throw new IOException("Exported " + storeType + " keystore failed verification");
+        }
+    }
+
+    /** The configured signing key material, for signers that take a
+     *  PrivateKey + certificate chain directly. Call only after
+     *  {@link #requireAuth} succeeded. */
+    public ApkSigner.SignerConfig signerConfig() throws Exception {
+        return createSignerConfig();
     }
 
     private static File alignedCopyOf(File inputApk, File output) {

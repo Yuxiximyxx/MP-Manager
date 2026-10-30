@@ -95,17 +95,22 @@ import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
+
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
 import io.github.abdurazaaqmohammed.ui.UiFields;
 import io.github.abdurazaaqmohammed.ui.activities.EditorSettingsActivity;
+import io.github.abdurazaaqmohammed.utils.KeyboardUtil;
 import io.github.codehasan.colorpicker.extensions.Extensions;
 import io.github.abdurazaaqmohammed.ui.dialogs.FilePickerDialog;
 import io.github.rosemoe.sora.text.Content;
@@ -129,6 +134,7 @@ import modder.hub.dexeditor.utils.ClassTree;
 import modder.hub.dexeditor.utils.DexBatchExporter;
 import modder.hub.dexeditor.utils.EditorHelper;
 import modder.hub.dexeditor.utils.EditorPositionManager;
+import modder.hub.dexeditor.utils.FileUtil;
 import modder.hub.dexeditor.utils.Notify_MT;
 import modder.hub.dexeditor.utils.UIHelper;
 import modder.hub.dexeditor.views.AlertCircularProgress;
@@ -141,6 +147,9 @@ import java.util.Random;
 import java.util.Stack;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
 import com.android.tools.smali.dexlib2.iface.ClassDef;
 /**
  * DexEditorActivity: The main entry point for the DEX editor.
@@ -217,7 +226,7 @@ public class DexEditorActivity extends BaseActivity {
      */
     public boolean isLightTheme() {
         try {
-            android.util.TypedValue value = new android.util.TypedValue();
+            TypedValue value = new TypedValue();
             if (getTheme().resolveAttribute(android.R.attr.isLightTheme, value, true)) return value.data != 0;
         } catch (Exception ignored) {
         }
@@ -241,10 +250,10 @@ public class DexEditorActivity extends BaseActivity {
 
     private int themeColor(int attr, int fallback) {
         try {
-            android.util.TypedValue value = new android.util.TypedValue();
+            TypedValue value = new TypedValue();
             if (getTheme().resolveAttribute(attr, value, true)) {
                 if (value.resourceId != 0) {
-                    int color = androidx.core.content.ContextCompat.getColor(this, value.resourceId);
+                    int color = ContextCompat.getColor(this, value.resourceId);
                     if (color != 0) return color;
                 }
                 if (value.data != 0) return value.data;
@@ -652,6 +661,15 @@ public class DexEditorActivity extends BaseActivity {
             MenuItem jumpToLine = menu.findItem(R.id.jumpToLine);
             if (jumpToLine != null) jumpToLine.setVisible(!isGraph);
 
+            // Same options the regular text editor offers, available for smali
+            // and plain text tabs alike (graph tabs have no text cursor).
+            int[] commonItems = {R.id.search, R.id.syntax, R.id.previous_position,
+                    R.id.next_position, R.id.start_of_line, R.id.end_of_line};
+            for (int commonId : commonItems) {
+                MenuItem commonItem = menu.findItem(commonId);
+                if (commonItem != null) commonItem.setVisible(!isGraph);
+            }
+
             MenuItem readOnlyItem = menu.findItem(R.id.read_only);
             readOnlyItem.setVisible(isSmali);
             readOnlyItem.setChecked(tab.isReadOnly);// preserve the read-only feature for targeted tab only
@@ -720,14 +738,22 @@ public class DexEditorActivity extends BaseActivity {
                 saveCurrentTab();
                 return true;
             } else if (id == R.id.search) {
-                // testing , i willl add a search bar like my modder hub app have.
-                // but I have plan to replace the sora editor with my custom MH-Texteditor
-                try {
-                    Method method = editor.getSearcher().getClass().getMethod("showSearchPanel");
-                    method.invoke(editor.getSearcher());
-                } catch (Exception ignored) {
-                    // ignored
-                }
+                editorFragment.showSearchPanel();
+                return true;
+            } else if (id == R.id.syntax) {
+                editorFragment.showSyntaxDialog();
+                return true;
+            } else if (id == R.id.previous_position) {
+                editorFragment.navigateHistory(false);
+                return true;
+            } else if (id == R.id.next_position) {
+                editorFragment.navigateHistory(true);
+                return true;
+            } else if (id == R.id.start_of_line) {
+                editorFragment.jumpToStartOfLine();
+                return true;
+            } else if (id == R.id.end_of_line) {
+                editorFragment.jumpToEndOfLine();
                 return true;
             } else if (id == R.id.navigation) {
                 editorFragment.showMethodFieldList();
@@ -1305,6 +1331,8 @@ public class DexEditorActivity extends BaseActivity {
         SwitchCompat swRemoveDebugParam = dialogView.findViewById(R.id.sw_remove_debug_param);
         SwitchCompat swRemoveDebugPrologue = dialogView.findViewById(R.id.sw_remove_debug_prologue);
         SwitchCompat swRemoveDebugLocal = dialogView.findViewById(R.id.sw_remove_debug_local);
+        SwitchCompat swRememberOptions = dialogView.findViewById(R.id.sw_remember_options);
+        SwitchCompat swAutoSave = dialogView.findViewById(R.id.sw_autosave_background);
 
         String[] versions = {"Keep the same", "35", "37", "38", "39"}; // upto 39 is okk
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, versions);
@@ -1325,6 +1353,8 @@ public class DexEditorActivity extends BaseActivity {
         swRemoveDebugParam.setChecked(sessionOptions.removeDebugParam);
         swRemoveDebugPrologue.setChecked(sessionOptions.removeDebugPrologue);
         swRemoveDebugLocal.setChecked(sessionOptions.removeDebugLocal);
+        swRememberOptions.setChecked(dexPref.getBoolean("compile_remember_options", true));
+        swAutoSave.setChecked(dexPref.getBoolean("compile_autosave_background", false));
 
         swRemoveAllDebug.setOnCheckedChangeListener((buttonView, isChecked) -> {
             swRemoveDebugSource.setEnabled(!isChecked);
@@ -1359,10 +1389,51 @@ public class DexEditorActivity extends BaseActivity {
             sessionOptions.removeDebugParam = swRemoveDebugParam.isChecked();
             sessionOptions.removeDebugPrologue = swRemoveDebugPrologue.isChecked();
             sessionOptions.removeDebugLocal = swRemoveDebugLocal.isChecked();
+
+            boolean remember = swRememberOptions.isChecked();
+            boolean autoSave = swAutoSave.isChecked();
+            dexPref.edit()
+                    .putBoolean("compile_remember_options", remember)
+                    .putBoolean("compile_autosave_background", autoSave)
+                    .putString("compile_dex_version", remember ? sessionOptions.dexVersion : "Keep the same")
+                    .putBoolean("compile_remove_all_debug", remember && sessionOptions.removeAllDebug)
+                    .putBoolean("compile_remove_debug_source", remember && sessionOptions.removeDebugSource)
+                    .putBoolean("compile_remove_debug_line", remember && sessionOptions.removeDebugLine)
+                    .putBoolean("compile_remove_debug_param", remember && sessionOptions.removeDebugParam)
+                    .putBoolean("compile_remove_debug_prologue", remember && sessionOptions.removeDebugPrologue)
+                    .putBoolean("compile_remove_debug_local", remember && sessionOptions.removeDebugLocal)
+                    .apply();
+
+            // Apply immediately: option changes recompile every dex, and the background
+            // compiler turns that into an instant save. Both are no-ops when unchanged.
+            if (classTree != null) {
+                classTree.setCompilationOptions(sessionOptions);
+                classTree.setAutoSaveEnabled(autoSave);
+            }
         });
         builder.setNegativeButton(android.R.string.cancel, null);
         AlertDialog dialog = builder.create();
         dialog.show();
+    }
+
+    /**
+     * Restores the persisted compilation options (and starts the background compiler when the
+     * user left it on). Called once the dex tree exists; applying the options marks every dex
+     * dirty only when the persisted options actually differ from the defaults.
+     */
+    private void applyPersistedCompilationOptions() {
+        if (classTree == null) return;
+        if (dexPref.getBoolean("compile_remember_options", true)) {
+            sessionOptions.dexVersion = dexPref.getString("compile_dex_version", sessionOptions.dexVersion);
+            sessionOptions.removeAllDebug = dexPref.getBoolean("compile_remove_all_debug", sessionOptions.removeAllDebug);
+            sessionOptions.removeDebugSource = dexPref.getBoolean("compile_remove_debug_source", sessionOptions.removeDebugSource);
+            sessionOptions.removeDebugLine = dexPref.getBoolean("compile_remove_debug_line", sessionOptions.removeDebugLine);
+            sessionOptions.removeDebugParam = dexPref.getBoolean("compile_remove_debug_param", sessionOptions.removeDebugParam);
+            sessionOptions.removeDebugPrologue = dexPref.getBoolean("compile_remove_debug_prologue", sessionOptions.removeDebugPrologue);
+            sessionOptions.removeDebugLocal = dexPref.getBoolean("compile_remove_debug_local", sessionOptions.removeDebugLocal);
+        }
+        classTree.setCompilationOptions(sessionOptions);
+        classTree.setAutoSaveEnabled(dexPref.getBoolean("compile_autosave_background", false));
     }
 
     public void showSmaliNavigation(String tempSmaliPath, String title, int lineNo) {
@@ -1988,11 +2059,6 @@ public class DexEditorActivity extends BaseActivity {
                         public void onAddClass(TreeNode node) {
                             activity.showAddClassDialog(node);
                         }
-
-                        @Override
-                        public void onImportClass(TreeNode node) {
-                            activity.showImportClassDialog(node);
-                        }
                     }, false);
                     break;
                 case 1:
@@ -2157,6 +2223,7 @@ public class DexEditorActivity extends BaseActivity {
                 .setNeutralButton(android.R.string.search_go, null)
                 .setNegativeButton(android.R.string.cancel, null)
                 .create();
+        KeyboardUtil.focusOnShow(dialog, editText, false);
         dialog.show();
 
         // Custom click listeners so "Search" doesn't auto-dismiss before we can read the field.
@@ -2185,12 +2252,14 @@ public class DexEditorActivity extends BaseActivity {
         container.setLayoutParams(params);
         container.addView(UiFields.wrap(this, editText, null, 0));
 
-        new MaterialAlertDialogBuilder(this)
+        AlertDialog filterDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.filter_strings)
                 .setView(container)
                 .setPositiveButton(R.string.apply, (d, w) -> adapter.setFilter(editText.getText().toString()))
                 .setNegativeButton(R.string.clear, (d, w) -> adapter.setFilter(null))
-                .show();
+                .create();
+        KeyboardUtil.focusOnShow(filterDialog, editText, false);
+        filterDialog.show();
     }
 
     public void showStringReplaceAllDialog() {
@@ -2211,7 +2280,7 @@ public class DexEditorActivity extends BaseActivity {
         container.addView(UiFields.wrap(this, etReplace, null, 0));
         container.addView(swMatchCase);
 
-        new MaterialAlertDialogBuilder(this)
+        AlertDialog replaceAllDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.replace_in_all_strings)
                 .setView(container)
                 .setPositiveButton(R.string.replace, (d, w) -> {
@@ -2221,7 +2290,9 @@ public class DexEditorActivity extends BaseActivity {
                     new StringBatchTask(this, null, find, replace, swMatchCase.isChecked(), null).start();
                 })
                 .setNegativeButton(android.R.string.cancel, null)
-                .show();
+                .create();
+        KeyboardUtil.focusOnShow(replaceAllDialog, etFind, false);
+        replaceAllDialog.show();
     }
 
     public void applyStringChanges(final StringAdapter adapter, final View btnApply) {
@@ -2492,6 +2563,7 @@ public class DexEditorActivity extends BaseActivity {
             ClassTree.claimWorkDir(cachePath);
             try {
                 classTree = new ClassTree(paths, cachePath);
+                applyPersistedCompilationOptions();
                 // Pre-build trees in background to avoid UI lag
                 final List<TreeNode> roots = classTree.buildFullTree();
                 final List<TreeNode> modified = classTree.buildEditedFullTree();
@@ -2816,11 +2888,49 @@ public class DexEditorActivity extends BaseActivity {
         etPkg.setText(defaultPkg);
         layout.addView(pkgBox);
 
+        LinearLayout classRow = new LinearLayout(this);
+        classRow.setOrientation(LinearLayout.HORIZONTAL);
+        classRow.setGravity(Gravity.CENTER_VERTICAL);
+
         TextInputLayout classBox = UiFields.box(this, "Class name");
         EditText etClass = UiFields.field(classBox, InputType.TYPE_CLASS_TEXT);
-        layout.addView(classBox);
+        LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        classBox.setLayoutParams(boxLp);
+        classRow.addView(classBox);
 
-        new MaterialAlertDialogBuilder(this)
+        ImageView browseBtn = new ImageView(this);
+        int btnPad = (int) (10 * getResources().getDisplayMetrics().density + 0.5f);
+        browseBtn.setPadding(btnPad, btnPad, btnPad, btnPad);
+        browseBtn.setImageResource(R.drawable.folder_24px);
+        TypedValue outValue = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true);
+        browseBtn.setBackgroundResource(outValue.resourceId);
+        browseBtn.setContentDescription("Browse Smali");
+
+        AlertDialog[] addDialogHolder = new AlertDialog[1];
+        browseBtn.setOnClickListener(v -> {
+            FilePickerDialog.Properties props = new FilePickerDialog.Properties();
+            props.selection_type = FilePickerDialog.FILE_AND_DIR_SELECT;
+            props.selection_mode = FilePickerDialog.MULTI_MODE;
+            props.extensions = new String[]{".smali", ".zip", ".apk", ".jar"};
+            props.preferenceKey = "dex_add_browse";
+            FilePickerDialog picker = new FilePickerDialog(DexEditorActivity.this, props);
+            picker.setTitle("Select Smali File, Folder, or Zip");
+            picker.setDialogSelectionListener(files -> {
+                if (files == null || files.length == 0) return;
+                if (addDialogHolder[0] != null && addDialogHolder[0].isShowing()) {
+                    addDialogHolder[0].dismiss();
+                }
+                String currentPkg = etPkg.getText() != null ? etPkg.getText().toString().trim() : "";
+                importSmaliFiles(files, currentPkg);
+            });
+            picker.show();
+        });
+        classRow.addView(browseBtn);
+
+        layout.addView(classRow);
+
+        addDialogHolder[0] = new MaterialAlertDialogBuilder(this)
                 .setTitle("Add")
                 .setView(layout)
                 .setNegativeButton(android.R.string.cancel, null)
@@ -2839,15 +2949,24 @@ public class DexEditorActivity extends BaseActivity {
     }
 
     private void createAndSaveNewClass(String fullPath, String simpleName) {
-        String smali = ".class public L" + fullPath + ";\n"
-                + ".super Ljava/lang/Object;\n"
-                + ".source \"" + simpleName + ".java\"\n\n"
-                + "# direct methods\n"
-                + ".method public constructor <init>()V\n"
-                + "    .registers 1\n\n"
-                + "    invoke-direct {p0}, Ljava/lang/Object;-><init>()V\n"
-                + "    return-void\n"
-                + ".end method\n";
+        createAndSaveNewClass(fullPath, simpleName, null);
+    }
+
+    private void createAndSaveNewClass(String fullPath, String simpleName, String customSmali) {
+        String smali;
+        if (customSmali != null && !customSmali.trim().isEmpty()) {
+            smali = customSmali;
+        } else {
+            smali = ".class public L" + fullPath + ";\n"
+                    + ".super Ljava/lang/Object;\n"
+                    + ".source \"" + simpleName + ".java\"\n\n"
+                    + "# direct methods\n"
+                    + ".method public constructor <init>()V\n"
+                    + "    .registers 1\n\n"
+                    + "    invoke-direct {p0}, Ljava/lang/Object;-><init>()V\n"
+                    + "    return-void\n"
+                    + ".end method\n";
+        }
         progressDialog = new AlertProgress(this);
         progressDialog.setCancelable(false);
         progressDialog.setCanceledOnTouchOutside(false);
@@ -2859,6 +2978,12 @@ public class DexEditorActivity extends BaseActivity {
                 if (targetVer <= 0) targetVer = 35;
                 ClassDef def = Smali.assemble(smali, SharedSmaliUtils.ASSEMBLE_OPTIONS, targetVer);
                 classTree.saveClassDef(def);
+                String actualClass = fullPath;
+                String type = def.getType();
+                if (type != null && type.startsWith("L") && type.endsWith(";")) {
+                    actualClass = type.substring(1, type.length() - 1);
+                }
+                final String classToOpen = actualClass;
                 final List<TreeNode> roots = classTree.buildFullTree();
                 final List<TreeNode> modified = classTree.buildEditedFullTree();
                 runOnUiThread(() -> {
@@ -2873,7 +2998,7 @@ public class DexEditorActivity extends BaseActivity {
                     refreshExplorerPage(1);
                     tabsAdapter.notifyDataSetChanged();
                     progressDialog.dismiss();
-                    openClass(fullPath);
+                    openClass(classToOpen);
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
@@ -2884,74 +3009,59 @@ public class DexEditorActivity extends BaseActivity {
         }).start();
     }
 
-    public void showImportClassDialog(TreeNode node) {
-        String defaultPkg = "";
-        if (node != null) {
-            String full = node.getFullName();
-            if (node.isDirectory()) {
-                defaultPkg = full.replace('/', '.');
-            } else if (node.getParent() != null && node.getParent().getFullName() != null) {
-                defaultPkg = node.getParent().getFullName().replace('/', '.');
-            } else {
-                int lastSlash = full.lastIndexOf('/');
-                if (lastSlash > 0) defaultPkg = full.substring(0, lastSlash).replace('/', '.');
-            }
+    private static class ImportItem {
+        final File file;
+        final String relativePath; // e.g. "myfolder/sub/Hello" (without .smali)
+
+        ImportItem(File file, String relativePath) {
+            this.file = file;
+            this.relativePath = relativePath;
         }
-        final String targetPkg = defaultPkg;
-        FilePickerDialog.Properties props = new FilePickerDialog.Properties();
-        props.selection_type = FilePickerDialog.FILE_AND_DIR_SELECT;
-        props.selection_mode = FilePickerDialog.MULTI_MODE;
-        props.extensions = new String[]{".smali", ".class"};
-        props.preferenceKey = "dex_import";
-        FilePickerDialog picker = new FilePickerDialog(this, props);
-        picker.setTitle("Import");
-        picker.setDialogSelectionListener(files -> {
-            if (files == null || files.length == 0) return;
-            importSmaliFiles(files, targetPkg);
-        });
-        picker.show();
     }
 
-    private void collectImportFiles(File f, List<File> out) {
+    private void collectImportFiles(File f, String basePrefix, List<ImportItem> out) {
         if (f == null || !f.exists()) return;
         if (f.isDirectory()) {
             File[] children = f.listFiles();
             if (children != null) {
+                String nextPrefix = (basePrefix == null || basePrefix.isEmpty()) ? f.getName() : basePrefix + "/" + f.getName();
                 for (File child : children) {
-                    collectImportFiles(child, out);
+                    collectImportFiles(child, nextPrefix, out);
                 }
             }
         } else if (f.isFile()) {
-            String lower = f.getName().toLowerCase(java.util.Locale.ROOT);
-            if (lower.endsWith(".smali") || lower.endsWith(".class")) {
-                out.add(f);
+            String lower = f.getName().toLowerCase(Locale.ROOT);
+            if (lower.endsWith(".smali")) {
+                String simpleName = f.getName().substring(0, f.getName().length() - 6);
+                String rel = (basePrefix == null || basePrefix.isEmpty()) ? simpleName : basePrefix + "/" + simpleName;
+                out.add(new ImportItem(f, rel));
+            } else if (lower.endsWith(".zip") || lower.endsWith(".apk") || lower.endsWith(".jar")) {
+                try (ZipFile zf = new ZipFile(f)) {
+                    Enumeration<? extends ZipEntry> en = zf.entries();
+                    File tempDexDir = new File(getCacheDir(), "dex_import_" + System.currentTimeMillis());
+                    tempDexDir.mkdirs();
+                    while (en.hasMoreElements()) {
+                        ZipEntry ze = en.nextElement();
+                        String entryName = ze.getName();
+                        if (!ze.isDirectory() && entryName.toLowerCase(Locale.ROOT).endsWith(".smali")) {
+                            File target = new File(tempDexDir, entryName);
+                            File parent = target.getParentFile();
+                            if (parent != null && !parent.exists()) parent.mkdirs();
+                            try (InputStream is = zf.getInputStream(ze);
+                                 FileOutputStream fos = new FileOutputStream(target)) {
+                                byte[] buf = new byte[8192];
+                                int n;
+                                while ((n = is.read(buf)) != -1) {
+                                    fos.write(buf, 0, n);
+                                }
+                            }
+                            String smaliPath = entryName.substring(0, entryName.length() - 6);
+                            out.add(new ImportItem(target, smaliPath));
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
             }
-        }
-    }
-
-    private List<ClassDef> translateClassFileToDefs(File f, int targetVer) {
-        try {
-            byte[] classBytes = java.nio.file.Files.readAllBytes(f.toPath());
-            com.android.dx.dex.DexOptions dexOptions = new com.android.dx.dex.DexOptions();
-            dexOptions.minSdkVersion = targetVer;
-            com.android.dx.dex.file.DexFile dexFile = new com.android.dx.dex.file.DexFile(dexOptions);
-            com.android.dx.cf.direct.DirectClassFile cf = new com.android.dx.cf.direct.DirectClassFile(
-                    new com.android.dx.util.ByteArray(classBytes), f.getName(), false);
-            com.android.dx.command.dexer.DxContext dxContext = new com.android.dx.command.dexer.DxContext();
-            com.android.dx.dex.cf.CfOptions cfOptions = new com.android.dx.dex.cf.CfOptions();
-            com.android.dx.dex.file.ClassDefItem item = com.android.dx.dex.cf.CfTranslator.translate(dxContext, cf, classBytes, cfOptions, dexOptions, dexFile);
-            dexFile.add(item);
-            byte[] dexBytes = dexFile.toDex(null, false);
-            com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile backedDex =
-                    new com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile(
-                            com.android.tools.smali.dexlib2.Opcodes.forDexVersion(targetVer), dexBytes);
-            List<ClassDef> defs = new ArrayList<>();
-            for (ClassDef def : backedDex.getClasses()) {
-                defs.add(def);
-            }
-            return defs;
-        } catch (Throwable ignored) {
-            return java.util.Collections.emptyList();
         }
     }
 
@@ -2964,41 +3074,62 @@ public class DexEditorActivity extends BaseActivity {
         new Thread(() -> {
             int imported = 0;
             String firstImportedClass = null;
+            String firstImportedCode = null;
             try {
                 int targetVer = dexVersion > 0 ? dexVersion : (classTree != null ? classTree.getOpenedDexVersion() : 35);
                 if (targetVer <= 0) targetVer = 35;
-                List<File> filesToProcess = new ArrayList<>();
+                List<ImportItem> filesToProcess = new ArrayList<>();
                 for (String path : filePaths) {
-                    collectImportFiles(new File(path), filesToProcess);
+                    collectImportFiles(new File(path), "", filesToProcess);
                 }
-                for (File f : filesToProcess) {
-                    String name = f.getName().toLowerCase(java.util.Locale.ROOT);
-                    if (name.endsWith(".smali")) {
-                        String code = modder.hub.dexeditor.utils.FileUtil.readFile(f.getAbsolutePath());
-                        if (code == null || code.trim().isEmpty()) continue;
-                        ClassDef def = Smali.assemble(code, SharedSmaliUtils.ASSEMBLE_OPTIONS, targetVer);
-                        classTree.saveClassDef(def);
-                        String type = def.getType();
-                        if (type != null && type.startsWith("L") && type.endsWith(";")) {
-                            String className = type.substring(1, type.length() - 1);
-                            if (firstImportedClass == null) firstImportedClass = className;
-                        }
-                        imported++;
-                    } else if (name.endsWith(".class")) {
-                        List<ClassDef> defs = translateClassFileToDefs(f, targetVer);
-                        for (ClassDef def : defs) {
-                            classTree.saveClassDef(def);
-                            String type = def.getType();
-                            if (type != null && type.startsWith("L") && type.endsWith(";")) {
-                                String className = type.substring(1, type.length() - 1);
-                                if (firstImportedClass == null) firstImportedClass = className;
-                            }
-                            imported++;
-                        }
+                for (ImportItem item : filesToProcess) {
+                    File f = item.file;
+                    String relPath = item.relativePath;
+                    String code = FileUtil.readFile(f.getAbsolutePath());
+                    if (code == null || code.trim().isEmpty()) continue;
+
+                    String cleanPkg = targetPkg == null ? "" : targetPkg.trim();
+                    while (cleanPkg.startsWith("/")) cleanPkg = cleanPkg.substring(1).trim();
+                    while (cleanPkg.endsWith("/")) cleanPkg = cleanPkg.substring(0, cleanPkg.length() - 1).trim();
+
+                    String desiredPath;
+                    if (!cleanPkg.isEmpty()) {
+                        desiredPath = cleanPkg.replace('.', '/') + "/" + relPath;
+                    } else {
+                        desiredPath = relPath;
                     }
+
+                    // Check existing .class definition
+                    Matcher m = Pattern.compile("(?m)^\\.class\\s+(.*?)(L[^;\\s]+;)").matcher(code);
+                    if (m.find()) {
+                        String originalType = m.group(2); // e.g. "La0;"
+                        if (!cleanPkg.isEmpty()) {
+                            String newType = "L" + desiredPath + ";";
+                            code = code.replace(originalType, newType);
+                        }
+                    } else {
+                        code = ".class public L" + desiredPath + ";\n.super Ljava/lang/Object;\n\n" + code;
+                    }
+
+                    ClassDef def = Smali.assemble(code, SharedSmaliUtils.ASSEMBLE_OPTIONS, targetVer);
+                    classTree.saveClassDef(def);
+
+                    String finalClassName = desiredPath;
+                    String type = def.getType();
+                    if (type != null && type.startsWith("L") && type.endsWith(";")) {
+                        finalClassName = type.substring(1, type.length() - 1);
+                    }
+                    classTree.getPendingSmaliMap().put(finalClassName, code);
+
+                    if (firstImportedClass == null) {
+                        firstImportedClass = finalClassName;
+                        firstImportedCode = code;
+                    }
+                    imported++;
                 }
                 final int totalImported = imported;
                 final String classToOpen = firstImportedClass;
+                final String codeToOpen = firstImportedCode;
                 final List<TreeNode> roots = classTree.buildFullTree();
                 final List<TreeNode> modified = classTree.buildEditedFullTree();
                 runOnUiThread(() -> {

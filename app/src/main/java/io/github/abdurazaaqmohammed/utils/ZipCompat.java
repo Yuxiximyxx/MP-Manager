@@ -1,6 +1,7 @@
 package io.github.abdurazaaqmohammed.utils;
 
 import net.lingala.zip4j.ZipFile;
+import net.lingala.zip4j.exception.ZipException;
 import net.lingala.zip4j.model.FileHeader;
 import net.lingala.zip4j.model.enums.CompressionMethod;
 
@@ -142,9 +143,9 @@ public final class ZipCompat {
 
     private static boolean isPasswordProblem(Throwable t) {
         for (Throwable c = t; c != null; c = c.getCause()) {
-            if (c instanceof net.lingala.zip4j.exception.ZipException
-                    && ((net.lingala.zip4j.exception.ZipException) c).getType()
-                    == net.lingala.zip4j.exception.ZipException.Type.WRONG_PASSWORD) return true;
+            if (c instanceof ZipException
+                    && ((ZipException) c).getType()
+                    == ZipException.Type.WRONG_PASSWORD) return true;
             if (c.getCause() == c) break;
         }
         return false;
@@ -161,10 +162,53 @@ public final class ZipCompat {
         if (parent != null) //noinspection ResultOfMethodCallIgnored
             parent.mkdirs();
         try (InputStream in = openEntry(zip, entryName);
-             OutputStream out = new FileOutputStream(outFile)) {
+             OutputStream out = new java.io.BufferedOutputStream(new FileOutputStream(outFile), COPY_BUFFER)) {
             byte[] buf = new byte[COPY_BUFFER];
             int n;
             while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+        }
+    }
+
+    /**
+     * Extracts a single entry without trusting the central directory's
+     * compressed size. zip4j caps entry reads at that size and fails with
+     * {@code EOFException: Unexpected end of input stream} on archives that
+     * under-declare it, which some large .apks bundles hit. The payload is
+     * located via the entry's real local header, and deflated streams are
+     * inflated to their natural end instead of a declared byte count.
+     */
+    public static void extractEntryTolerant(File zip, String entryName, File outFile) throws IOException {
+        Entry e = findEntry(readCentralDirectory(zip), entryName);
+        if (e.encrypted) throw new IOException("Encrypted entries need a password: " + e.name);
+        File parent = outFile.getParentFile();
+        if (parent != null) //noinspection ResultOfMethodCallIgnored
+            parent.mkdirs();
+        try (RandomAccessFile raf = new RandomAccessFile(zip, "r")) {
+            byte[] local = new byte[30];
+            raf.seek(e.localOffset);
+            raf.readFully(local);
+            if (u4(local, 0) != SIG_LOCAL)
+                throw new IOException("Bad local header for entry: " + e.name);
+            long dataStart = e.localOffset + 30L + u2(local, 26) + u2(local, 28);
+            long available = raf.length() - dataStart;
+            if (available <= 0) throw new IOException("Entry data missing for: " + e.name);
+            // Deflate is self-terminating, so an oversized window cannot leak
+            // into the next entry; stored payloads have no such marker and
+            // still need the declared size as their end.
+            long regionLen = e.method == METHOD_DEFLATE ? available
+                    : (e.compressedSize > 0 ? Math.min(e.compressedSize, available) : available);
+            CRC32 crc = new CRC32();
+            try (InputStream in = decompress(new RegionInputStream(raf, dataStart, regionLen), e.method, e.name);
+                 OutputStream out = new FileOutputStream(outFile)) {
+                byte[] buf = new byte[COPY_BUFFER];
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    out.write(buf, 0, n);
+                    crc.update(buf, 0, n);
+                }
+            }
+            if ((e.uncompressedSize != 0 || e.crc != 0) && crc.getValue() != e.crc)
+                throw new IOException("Entry data is corrupt (CRC mismatch): " + e.name);
         }
     }
 
@@ -191,7 +235,7 @@ public final class ZipCompat {
                 parent.mkdirs();
             RandomAccessFile raf = new RandomAccessFile(zip, "r");
             try (InputStream in = openRawEntry(raf, e);
-                 OutputStream os = new FileOutputStream(out)) {
+                 OutputStream os = new java.io.BufferedOutputStream(new FileOutputStream(out), COPY_BUFFER)) {
                 byte[] buf = new byte[COPY_BUFFER];
                 int n;
                 while ((n = in.read(buf)) != -1) os.write(buf, 0, n);

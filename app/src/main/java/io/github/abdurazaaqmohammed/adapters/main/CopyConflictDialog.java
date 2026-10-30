@@ -1,12 +1,15 @@
 package io.github.abdurazaaqmohammed.adapters.main;
 
 import android.text.TextUtils;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.io.File;
+import com.google.android.material.checkbox.MaterialCheckBox;
+
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
@@ -38,7 +41,7 @@ public final class CopyConflictDialog {
 
     /** One name collision, with everything needed to describe it to the user. */
     public static final class Conflict {
-        public final File source;
+        public final Object source;
         public final String sourceName;
         public final long sourceSize;
         public final long sourceTime;
@@ -47,7 +50,7 @@ public final class CopyConflictDialog {
         public final long existingTime;
         public final String suggestedName;
 
-        public Conflict(File source, String sourceName, long sourceSize, long sourceTime,
+        public Conflict(Object source, String sourceName, long sourceSize, long sourceTime,
                         String existingName, long existingSize, long existingTime,
                         String suggestedName) {
             this.source = source;
@@ -59,6 +62,63 @@ public final class CopyConflictDialog {
             this.existingTime = existingTime;
             this.suggestedName = suggestedName;
         }
+    }
+
+    public static final class Decision {
+        public final int action;
+        public final boolean applyToAll;
+
+        public Decision(int action, boolean applyToAll) {
+            this.action = action;
+            this.applyToAll = applyToAll;
+        }
+    }
+
+    public static Decision askConflict(MainActivity context, DialogUtil dialogUtil, int singleTitleRes,
+                                       int allTitleRes, List<Conflict> conflicts, Runnable onDismissed) {
+        if (conflicts == null || conflicts.isEmpty()) return new Decision(ACTION_CANCEL, false);
+        final CountDownLatch latch = new CountDownLatch(1);
+        final Decision[] result = new Decision[]{new Decision(ACTION_CANCEL, false)};
+        final MaterialCheckBox[] cbHolder =
+                new MaterialCheckBox[1];
+
+        context.handler.post(() -> {
+            View view;
+            int titleRes;
+            if (conflicts.size() == 1) {
+                titleRes = singleTitleRes;
+                view = buildSingleConflictView(context, conflicts.get(0), cbHolder);
+            } else {
+                titleRes = allTitleRes;
+                view = buildConflictList(context, conflicts, cbHolder);
+            }
+            dialogUtil.styleAlertDialog(dialogUtil.getDialogBuilder()
+                    .setTitle(titleRes)
+                    .setView(view)
+                    .setPositiveButton(R.string.copy_conflict_replace,
+                            (d, w) -> {
+                                boolean all = cbHolder[0] != null && cbHolder[0].isChecked();
+                                result[0] = new Decision(ACTION_REPLACE, all);
+                                latch.countDown();
+                            })
+                    .setNeutralButton(R.string.keep,
+                            (d, w) -> {
+                                boolean all = cbHolder[0] != null && cbHolder[0].isChecked();
+                                result[0] = new Decision(ACTION_KEEP_BOTH, all);
+                                latch.countDown();
+                            })
+                    .setNegativeButton(R.string.copy_conflict_skip,
+                            (d, w) -> {
+                                boolean all = cbHolder[0] != null && cbHolder[0].isChecked();
+                                result[0] = new Decision(ACTION_SKIP, all);
+                                latch.countDown();
+                            })
+                    .setOnCancelListener(d -> latch.countDown())
+                    .create());
+        });
+        await(latch);
+        if (onDismissed != null) onDismissed.run();
+        return result[0];
     }
 
     /**
@@ -76,31 +136,9 @@ public final class CopyConflictDialog {
      */
     public static int askSingle(MainActivity context, DialogUtil dialogUtil, int titleRes,
                                 Conflict c, Runnable onDismissed) {
-        final CountDownLatch latch = new CountDownLatch(1);
-        final int[] result = {ACTION_CANCEL};
-        context.handler.post(() -> dialogUtil.styleAlertDialog(dialogUtil.getDialogBuilder()
-                .setTitle(titleRes)
-                .setMessage(describe(context, c))
-                .setPositiveButton(R.string.copy_conflict_replace,
-                        (d, w) -> {
-                            result[0] = ACTION_REPLACE;
-                            latch.countDown();
-                        })
-                .setNeutralButton(R.string.copy_conflict_keep_both,
-                        (d, w) -> {
-                            result[0] = ACTION_KEEP_BOTH;
-                            latch.countDown();
-                        })
-                .setNegativeButton(R.string.copy_conflict_skip,
-                        (d, w) -> {
-                            result[0] = ACTION_SKIP;
-                            latch.countDown();
-                        })
-                .setOnCancelListener(d -> latch.countDown())
-                .create()));
-        await(latch);
-        if (onDismissed != null) onDismissed.run();
-        return result[0];
+        Decision d = askConflict(context, dialogUtil, titleRes, titleRes,
+                Collections.singletonList(c), onDismissed);
+        return d.action;
     }
 
     /**
@@ -121,32 +159,8 @@ public final class CopyConflictDialog {
      */
     public static int askBulk(MainActivity context, DialogUtil dialogUtil, int singleTitleRes,
                               int allTitleRes, List<Conflict> conflicts, Runnable onDismissed) {
-        if (conflicts.size() == 1) return askSingle(context, dialogUtil, singleTitleRes, conflicts.get(0), onDismissed);
-        final CountDownLatch latch = new CountDownLatch(1);
-        final int[] result = {ACTION_CANCEL};
-        context.handler.post(() -> dialogUtil.styleAlertDialog(dialogUtil.getDialogBuilder()
-                .setTitle(allTitleRes)
-                .setView(buildConflictList(context, conflicts))
-                .setPositiveButton(R.string.copy_conflict_replace_all,
-                        (d, w) -> {
-                            result[0] = ACTION_REPLACE;
-                            latch.countDown();
-                        })
-                .setNeutralButton(R.string.copy_conflict_keep_both_all,
-                        (d, w) -> {
-                            result[0] = ACTION_KEEP_BOTH;
-                            latch.countDown();
-                        })
-                .setNegativeButton(R.string.copy_conflict_skip_all,
-                        (d, w) -> {
-                            result[0] = ACTION_SKIP;
-                            latch.countDown();
-                        })
-                .setOnCancelListener(d -> latch.countDown())
-                .create()));
-        await(latch);
-        if (onDismissed != null) onDismissed.run();
-        return result[0];
+        Decision d = askConflict(context, dialogUtil, singleTitleRes, allTitleRes, conflicts, onDismissed);
+        return d.action;
     }
 
     private static void await(CountDownLatch latch) {
@@ -168,12 +182,41 @@ public final class CopyConflictDialog {
         return sb.toString();
     }
 
-    private static android.view.View buildConflictList(MainActivity context, List<Conflict> conflicts) {
+    private static View buildSingleConflictView(MainActivity context, Conflict c,
+                                                            MaterialCheckBox[] outCheckBox) {
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = Math.round(16 * context.getResources().getDisplayMetrics().density);
+        root.setPadding(pad, pad / 2, pad, 0);
+
+        TextView tv = new TextView(context);
+        tv.setText(describe(context, c));
+        tv.setTextSize(14f);
+        root.addView(tv, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        MaterialCheckBox cb = new MaterialCheckBox(context);
+        cb.setText(R.string.all_checkbox);
+        LinearLayout.LayoutParams cbLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cbLp.setMargins(0, pad / 2, 0, pad / 4);
+        cb.setLayoutParams(cbLp);
+        root.addView(cb);
+        if (outCheckBox != null && outCheckBox.length > 0) outCheckBox[0] = cb;
+
+        return root;
+    }
+
+    private static View buildConflictList(MainActivity context, List<Conflict> conflicts,
+                                                      MaterialCheckBox[] outCheckBox) {
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+
         ScrollView scroll = new ScrollView(context);
         LinearLayout box = new LinearLayout(context);
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = Math.round(16 * context.getResources().getDisplayMetrics().density);
-        box.setPadding(pad, pad / 2, pad, pad / 2);
+        box.setPadding(pad, pad / 2, pad, pad / 4);
         for (Conflict c : conflicts) {
             TextView tv = new TextView(context);
             tv.setTextSize(13f);
@@ -185,7 +228,19 @@ public final class CopyConflictDialog {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
         scroll.addView(box);
-        return scroll;
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        MaterialCheckBox cb = new MaterialCheckBox(context);
+        cb.setText(R.string.all_checkbox);
+        LinearLayout.LayoutParams cbLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cbLp.setMargins(pad, pad / 4, pad, pad / 4);
+        cb.setLayoutParams(cbLp);
+        root.addView(cb);
+        if (outCheckBox != null && outCheckBox.length > 0) outCheckBox[0] = cb;
+
+        return root;
     }
 
     private static String formatSize(MainActivity context, long bytes) {

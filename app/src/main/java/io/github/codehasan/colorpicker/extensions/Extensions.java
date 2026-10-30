@@ -20,6 +20,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.util.TypedValue;
 import android.view.View;
+import android.view.ViewGroup;
 
 import androidx.annotation.StringRes;
 import androidx.core.content.ContextCompat;
@@ -28,6 +29,7 @@ import com.google.android.material.snackbar.Snackbar;
 
 import io.github.abdurazaaqmohammed.MPManager.MainActivity;
 import io.github.abdurazaaqmohammed.MPManager.R;
+import io.github.abdurazaaqmohammed.utils.ErrorUtil;
 
 public final class Extensions {
 
@@ -40,13 +42,35 @@ public final class Extensions {
     }
 
     public static void showMessage(Activity activity, CharSequence message) {
-        if (activity instanceof MainActivity && activity.hasWindowFocus()) {
-            View bottomBar = activity.findViewById(R.id.bottomBar);
-            Snackbar.make(bottomBar, message, Snackbar.LENGTH_SHORT).setAnchorView(bottomBar).show();
+        if (activity == null) return;
+        Snackbar snackbar;
+        View bottomBar = activity.findViewById(R.id.bottomBar);
+        if (bottomBar != null && bottomBar.getVisibility() == View.VISIBLE) {
+            snackbar = Snackbar.make(bottomBar, message, Snackbar.LENGTH_SHORT).setAnchorView(bottomBar);
+            try {
+                View snackView = snackbar.getView();
+                if (snackView.getLayoutParams() instanceof ViewGroup.MarginLayoutParams mlp) {
+                    mlp.bottomMargin += dp2px(activity, 16);
+                    snackView.setLayoutParams(mlp);
+                }
+            } catch (Exception ignored) {}
         } else {
-            Snackbar.make(activity.findViewById(android.R.id.content), message, Snackbar.LENGTH_SHORT).show();
-            // When dialog is open visibility is still reduced and can get cut off need to check all usages of this and change it or something
+            View root = activity.findViewById(android.R.id.content);
+            if (root == null) return;
+            snackbar = Snackbar.make(root, message, Snackbar.LENGTH_SHORT);
+            try {
+                View snackView = snackbar.getView();
+                if (snackView.getLayoutParams() instanceof ViewGroup.MarginLayoutParams mlp) {
+                    mlp.bottomMargin += dp2px(activity, 64);
+                    snackView.setLayoutParams(mlp);
+                }
+            } catch (Exception ignored) {}
         }
+        snackbar.getView().setOnTouchListener((v, event) -> {
+            snackbar.dismiss();
+            return false;
+        });
+        snackbar.show();
     }
 
     /**
@@ -55,22 +79,52 @@ public final class Extensions {
      * create folder X") hides the actual cause.
      */
     public static void showMessage(Activity activity, CharSequence message, CharSequence details) {
-        boolean anchored = activity instanceof MainActivity && activity.hasWindowFocus();
-        View anchor = activity.findViewById(anchored ? R.id.bottomBar : android.R.id.content);
+        if (activity == null) return;
         if (details == null || details.length() == 0) {
             showMessage(activity, message);
             return;
         }
-        Snackbar.make(anchor, message, Snackbar.LENGTH_LONG)
-                .setAnchorView(anchored ? anchor : null)
-                .setAction(R.string.details, v ->
-                        new io.github.abdurazaaqmohammed.utils.ErrorUtil(activity)
-                                .showError(String.valueOf(details)))
+        View bottomBar = activity.findViewById(R.id.bottomBar);
+        View anchor = (bottomBar != null && bottomBar.getVisibility() == View.VISIBLE) ? bottomBar : activity.findViewById(android.R.id.content);
+        if (anchor == null) return;
+        Snackbar snackbar = Snackbar.make(anchor, message, Snackbar.LENGTH_LONG);
+        if (bottomBar != null && bottomBar.getVisibility() == View.VISIBLE) {
+            snackbar.setAnchorView(bottomBar);
+            try {
+                View snackView = snackbar.getView();
+                if (snackView.getLayoutParams() instanceof ViewGroup.MarginLayoutParams mlp) {
+                    mlp.bottomMargin += dp2px(activity, 16);
+                    snackView.setLayoutParams(mlp);
+                }
+            } catch (Exception ignored) {}
+        } else {
+            try {
+                View snackView = snackbar.getView();
+                if (snackView.getLayoutParams() instanceof ViewGroup.MarginLayoutParams mlp) {
+                    mlp.bottomMargin += dp2px(activity, 64);
+                    snackView.setLayoutParams(mlp);
+                }
+            } catch (Exception ignored) {}
+        }
+        snackbar.setAction(R.string.details, v ->
+                new ErrorUtil(activity)
+                        .showError(String.valueOf(details)))
                 .show();
     }
 
     public static void showMessage(Dialog d, CharSequence message) {
-        Snackbar.make(d.findViewById(android.R.id.content), message, Snackbar.LENGTH_SHORT).show();
+        if (d == null) return;
+        View root = d.findViewById(android.R.id.content);
+        if (root == null) return;
+        Snackbar snackbar = Snackbar.make(root, message, Snackbar.LENGTH_SHORT);
+        try {
+            View snackView = snackbar.getView();
+            if (snackView.getLayoutParams() instanceof ViewGroup.MarginLayoutParams mlp) {
+                mlp.bottomMargin += dp2px(root.getContext(), 24);
+                snackView.setLayoutParams(mlp);
+            }
+        } catch (Exception ignored) {}
+        snackbar.show();
     }
 
     public static int dp2px(Context context, float dp) {

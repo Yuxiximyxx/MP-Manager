@@ -1002,48 +1002,47 @@ public class MediaPlayerActivity extends BaseActivity implements
     }
 
     private void playPathWithSiblings(String playPath) {
-        playerManager.play(PlayerManager.buildMediaItem(this, playPath));
-        new Thread(() -> {
-            try {
-                File cur = new File(playPath);
-                File dir = cur.getParentFile();
-                if (dir != null && dir.isDirectory()) {
-                    File[] all = dir.listFiles();
-                    if (all != null) {
-                        List<File> media = new ArrayList<>();
-                        for (File f : all) {
-                            if (f == null || !f.isFile()) continue;
-                            String n = f.getName().toLowerCase(Locale.ROOT);
-                            if (n.endsWith(".mp3") || n.endsWith(".wav") || n.endsWith(".flac") || n.endsWith(".ogg")
-                                    || n.endsWith(".m4a") || n.endsWith(".aac") || n.endsWith(".wma") || n.endsWith(".opus")
-                                    || n.endsWith(".mp4") || n.endsWith(".mkv") || n.endsWith(".avi") || n.endsWith(".mov")
-                                    || n.endsWith(".webm") || n.endsWith(".3gp") || n.endsWith(".ts") || n.endsWith(".flv")
-                                    || n.endsWith(".wmv") || n.endsWith(".m4v")) media.add(f);
-                        }
-                        media.sort((a, b) -> FileSorting.compareNaturalIgnoreCase(a.getName(), b.getName()));
-                        if (media.size() > 1) {
-                            List<MediaItem> q = new ArrayList<>();
-                            int start = 0;
-                            for (int i = 0; i < media.size(); i++) {
-                                String path = media.get(i).getAbsolutePath();
-                                if (path.equals(cur.getAbsolutePath())) {
-                                    q.add(playerManager.getCurrentItem() != null ? playerManager.getCurrentItem() : PlayerManager.buildMediaItemFast(path));
-                                    start = i;
-                                } else {
-                                    q.add(PlayerManager.buildMediaItemFast(path));
-                                }
+        try {
+            File cur = new File(playPath);
+            File dir = cur.getParentFile();
+            if (dir != null && dir.isDirectory()) {
+                File[] all = dir.listFiles();
+                if (all != null) {
+                    List<File> media = new ArrayList<>();
+                    for (File f : all) {
+                        if (f == null || !f.isFile()) continue;
+                        String n = f.getName().toLowerCase(Locale.ROOT);
+                        if (n.endsWith(".mp3") || n.endsWith(".wav") || n.endsWith(".flac") || n.endsWith(".ogg")
+                                || n.endsWith(".m4a") || n.endsWith(".aac") || n.endsWith(".wma") || n.endsWith(".opus")
+                                || n.endsWith(".mp4") || n.endsWith(".mkv") || n.endsWith(".avi") || n.endsWith(".mov")
+                                || n.endsWith(".webm") || n.endsWith(".3gp") || n.endsWith(".ts") || n.endsWith(".flv")
+                                || n.endsWith(".wmv") || n.endsWith(".m4v")) media.add(f);
+                    }
+                    io.github.abdurazaaqmohammed.data.prefs.ListPrefs lp = new io.github.abdurazaaqmohammed.data.prefs.ListPrefs(this);
+                    String dirPath = dir.getAbsolutePath();
+                    File[] arr = media.toArray(new File[0]);
+                    FileSorting.sortFiles(arr, lp.sortBy(dirPath), lp.sortReverse(dirPath));
+                    if (arr.length > 0) {
+                        List<MediaItem> q = new ArrayList<>();
+                        int start = 0;
+                        String curAbs = cur.getAbsolutePath();
+                        String curName = cur.getName();
+                        for (int i = 0; i < arr.length; i++) {
+                            String path = arr[i].getAbsolutePath();
+                            if (path.equals(curAbs) || arr[i].getName().equalsIgnoreCase(curName)) {
+                                start = i;
+                                q.add(PlayerManager.buildMediaItem(this, path));
+                            } else {
+                                q.add(PlayerManager.buildMediaItemFast(path));
                             }
-                            final int startIdx = start;
-                            final List<MediaItem> fullQueue = q;
-                            runOnUiThread(() -> {
-                                playerManager.setQueue(fullQueue, startIdx);
-                                updateControlsState();
-                            });
                         }
+                        playerManager.play(q, start);
+                        return;
                     }
                 }
-            } catch (Exception ignored) {}
-        }).start();
+            }
+        } catch (Exception ignored) {}
+        playerManager.play(PlayerManager.buildMediaItem(this, playPath));
     }
 
     @Override

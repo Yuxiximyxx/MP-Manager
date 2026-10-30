@@ -13,6 +13,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -146,32 +147,24 @@ public class SettingsController {
             }
         } catch (Exception ignored) {
         }
-        android.os.Process.killProcess(android.os.Process.myPid());
+        Process.killProcess(Process.myPid());
         System.exit(0);
     }
 
     public void attach(ScrollView settingsDialog) {
         SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(activity);
 
-        MaterialSwitch switchRequestRoot = settingsDialog.findViewById(R.id.switchRequestRoot);
-        if (switchRequestRoot != null) {
-            switchRequestRoot.setChecked(settings.getBoolean("startup_request_root", true));
-            switchRequestRoot.setOnCheckedChangeListener((btn, isChecked) -> {
-                settings.edit().putBoolean("startup_request_root", isChecked).apply();
-            });
-        }
-
-        MaterialSwitch switchRequestShell = settingsDialog.findViewById(R.id.switchRequestShell);
-        if (switchRequestShell != null) {
-            switchRequestShell.setChecked(settings.getBoolean("startup_request_shell", true));
-            switchRequestShell.setOnCheckedChangeListener((btn, isChecked) -> {
-                settings.edit().putBoolean("startup_request_shell", isChecked).apply();
-            });
-        }
-
         MaterialButtonToggleGroup themeButtons = settingsDialog.findViewById(R.id.themeToggleGroup);
         String currentThemeId = ThemeRegistry.getCurrentId(activity);
-        themeButtons.check(BuiltInThemes.LIGHT_ID.equals(currentThemeId) ? R.id.lightThemeButton : R.id.systemThemeButton);
+        if (BuiltInThemes.LIGHT_ID.equals(currentThemeId)) {
+            themeButtons.check(R.id.lightThemeButton);
+        } else if (BuiltInThemes.DARK_ID.equals(currentThemeId)) {
+            themeButtons.check(R.id.darkThemeButton);
+        } else if (BuiltInThemes.BLACK_ID.equals(currentThemeId)) {
+            themeButtons.check(R.id.blackThemeButton);
+        } else {
+            themeButtons.check(R.id.systemThemeButton);
+        }
         for (int i = 0; i < themeButtons.getChildCount(); i++) {
             View child = themeButtons.getChildAt(i);
             if (child instanceof MaterialButton) {
@@ -179,6 +172,10 @@ public class SettingsController {
                     int buttonId = v3.getId();
                     if (buttonId == R.id.lightThemeButton) {
                         Extensions.showMessage(activity, R.string.light_theme);
+                    } else if (buttonId == R.id.darkThemeButton) {
+                        Extensions.showMessage(activity, R.string.dark_theme);
+                    } else if (buttonId == R.id.blackThemeButton) {
+                        Extensions.showMessage(activity, R.string.black_theme);
                     } else if (buttonId == R.id.systemThemeButton) {
                         Extensions.showMessage(activity, R.string.system_theme);
                     }
@@ -194,6 +191,12 @@ public class SettingsController {
                 if (checkedId == R.id.lightThemeButton) {
                     themeButtons.check(R.id.lightThemeButton);
                     pluginId = BuiltInThemes.LIGHT_ID;
+                } else if (checkedId == R.id.darkThemeButton) {
+                    themeButtons.check(R.id.darkThemeButton);
+                    pluginId = BuiltInThemes.DARK_ID;
+                } else if (checkedId == R.id.blackThemeButton) {
+                    themeButtons.check(R.id.blackThemeButton);
+                    pluginId = BuiltInThemes.BLACK_ID;
                 } else {
                     system = true;
                     themeButtons.check(R.id.systemThemeButton);
@@ -914,7 +917,7 @@ public class SettingsController {
                         : pos == 2 ? RecycleBin.MODE_NEVER : RecycleBin.MODE_ASK));
 
         AutoCompleteTextView retentionTv = root.findViewById(R.id.recycleBinRetentionTv);
-        int[] retentionChoices = {1, 7, 30, 90, 0};
+        int[] retentionChoices = {1, 7, 30, 0};
         List<String> retentionLabels = new ArrayList<>();
         for (int d : retentionChoices) {
             retentionLabels.add(d == 0 ? activity.getString(R.string.forever)

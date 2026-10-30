@@ -18,9 +18,7 @@ import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
@@ -39,7 +37,6 @@ import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.CheckBox;
@@ -61,7 +58,6 @@ import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import com.android.apksig.ApkVerifier;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.tabs.TabLayout;
@@ -89,16 +85,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import android.widget.PopupWindow;
-
 import net.lingala.zip4j.ZipFile;
 import net.lingala.zip4j.model.FileHeader;
 import net.lingala.zip4j.model.ZipParameters;
 import net.lingala.zip4j.model.enums.CompressionLevel;
 
 import org.apache.commons.collections4.Predicate;
-
-import io.github.abdurazaaqmohammed.adapters.DropdownAdapter;
 
 import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.adapters.AppRecyclerViewAdapter;
@@ -789,6 +781,10 @@ public class APKExtractorActivity extends BaseActivity {
         iconList.add(R.drawable.baseline_share_24);
         actionIds.add(1);
 
+        displayList.add(getString(R.string.open_in_play_store));
+        iconList.add(R.drawable.baseline_open_in_new_24);
+        actionIds.add(111);
+
         displayList.add(getString(R.string.launch));
         iconList.add(R.drawable.baseline_open_in_new_24);
         actionIds.add(100);
@@ -923,6 +919,15 @@ public class APKExtractorActivity extends BaseActivity {
                         if (launchIntent == null)
                             Extensions.showMessage(this, getString(R.string.cannot_launch_app));
                         else startActivity(launchIntent);
+                        break;
+                    case 111: // Open in Play Store
+                        try {
+                            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + packageName)));
+                        } catch (Exception e) {
+                            try {
+                                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + packageName)));
+                            } catch (Exception ignored) {}
+                        }
                         break;
                     case 101: // App Info
                         startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:" + packageName)));

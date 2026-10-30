@@ -40,15 +40,12 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
-import androidx.preference.PreferenceManager;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.eclipse.tm4e.core.registry.IGrammarSource;
 import org.eclipse.tm4e.core.registry.IThemeSource;
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -65,6 +62,10 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import android.zero.studio.widget.editor.symbolinput.AdvancedSymbolInputView;
+import android.zero.studio.widget.editor.symbolinput.BottomBarMigration;
+import android.zero.studio.widget.editor.symbolinput.SymbolManagerActivity;
+import kotlin.Unit;
 import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.ui.activities.TextEditorActivity;
 import io.github.abdurazaaqmohammed.utils.ErrorUtil;
@@ -143,14 +144,14 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
                 } catch (Exception ignored) {
                 }
             });
-    private LinearLayout bottomBarLayout, searchPanel, replacePanel, linearHeader;
+    private LinearLayout searchPanel, replacePanel, linearHeader;
+    private AdvancedSymbolInputView symbolInputView;
     private EditText searchInput, replaceInput;
     private View btnSearchPrev, btnSearchNext, btnReplaceToggle, btnSearchMenu, btnStopSearch;
     private MaterialButton btnReplaceAll;
     //private SymbolInputView symbolInput;
     private ProgressBar loadingProgress;
     private TextView textviewLineNo, methodName, textviewLeft;
-    private View bottomBarScroll;
     //private View symbolInputContainer;
 
     private String className = "";
@@ -276,8 +277,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
 
     private void initViews(View view) {
         editor = view.findViewById(R.id.editor);
-        bottomBarLayout = view.findViewById(R.id.bottom_bar_layout);
-        bottomBarScroll = view.findViewById(R.id.bottom_bar_scroll);
+        symbolInputView = view.findViewById(R.id.symbol_input_view);
         searchPanel = view.findViewById(R.id.search_panel);
         replacePanel = view.findViewById(R.id.replace_panel);
         searchInput = view.findViewById(R.id.search_input);
@@ -302,12 +302,28 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
         preferencesEditor = sharedPreferences.edit();
         packageManager = requireContext().getPackageManager();
 
-        ViewCompat.setOnApplyWindowInsetsListener(bottomBarScroll, (v, insets) -> {
-            Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
-            v.setTranslationY(-ime.bottom);
-            return insets;
-        });
-        ViewCompat.requestApplyInsets(bottomBarScroll);
+        if (symbolInputView != null) {
+            symbolInputView.bindEditor(editor);
+            symbolInputView.setOnOpenManagerListener(() -> {
+                if (getContext() != null)
+                    startActivity(new Intent(requireContext(), SymbolManagerActivity.class)
+                            .putExtra(SymbolManagerActivity.EXTRA_THEME_STYLE,
+                                    io.github.abdurazaaqmohammed.core.ui.theme.ThemeRegistry
+                                            .currentStyleRes(requireContext())));
+                return Unit.INSTANCE;
+            });
+            symbolInputView.setOnCustomActionListener((actionId, text, secondText, options) -> {
+                executeBottomBarCustomAction(actionId, text, secondText, options);
+                return Unit.INSTANCE;
+            });
+
+            ViewCompat.setOnApplyWindowInsetsListener(symbolInputView, (v, insets) -> {
+                Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
+                v.setTranslationY(-ime.bottom);
+                return insets;
+            });
+            ViewCompat.requestApplyInsets(symbolInputView);
+        }
 
         if (textviewLeft != null) textviewLeft.setText(!TextUtils.isEmpty(title) ? title : getString(R.string.ellipsis));
 
@@ -749,6 +765,20 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
 
         public void showSearchPanel() { searchPanel.setVisibility(View.VISIBLE); }
 
+    /** Moves the cursor to the start of the current line, recording the old position. */
+    public void jumpToStartOfLine() {
+        Cursor c = editor.getCursor();
+        recordPosition(c.getLeftLine(), c.getLeftColumn());
+        editor.setSelection(c.getLeftLine(), 0);
+    }
+
+    /** Moves the cursor to the end of the current line, recording the old position. */
+    public void jumpToEndOfLine() {
+        Cursor c = editor.getCursor();
+        recordPosition(c.getLeftLine(), c.getLeftColumn());
+        editor.setSelection(c.getLeftLine(), editor.getText().getColumnCount(c.getLeftLine()));
+    }
+
     public void searchFor(String query, boolean useRegex, boolean matchCase) {
         if (editor == null || query == null || query.isEmpty()) return;
         try {
@@ -860,135 +890,113 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
     }
 
         public void loadBottomBarFunctions() {
-        if (bottomBarLayout == null) return;
-        bottomBarLayout.removeAllViews();
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(requireContext());
-        String json = prefs.getString("pref_bottom_bar_buttons", "[]");
-        if (json.equals("[]") || json.equals("Search,Copy,Cut,Paste")) {
-            try {
-                JSONArray array = new JSONArray();
-                array.put(new JSONObject().put("action", "Search").put("label", "Search"));
-                array.put(new JSONObject().put("action", "Copy selection").put("label", "Copy"));
-                array.put(new JSONObject().put("action", "Cut selection").put("label", "Cut"));
-                array.put(new JSONObject().put("action", "Paste selection").put("label", "Paste"));
-                json = array.toString();
-                prefs.edit().putString("pref_bottom_bar_buttons", json).apply();
-            } catch (Exception ignored) {}
-        }
+        if (symbolInputView == null) return;
         try {
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            params.setMarginEnd(3);
-            params.setMarginStart(3);
-            JSONArray array = new JSONArray(json);
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject obj = array.getJSONObject(i);
-                String action = obj.getString("action");
-                String label = obj.optString("label", action);
-                MaterialButton btn = new MaterialButton(requireContext());
-                btn.setText(resolveBottomBarLabel(label));
-                btn.setLayoutParams(params);
-                btn.setOnClickListener(v -> executeBottomBarFunction(obj, false));
-                btn.setOnLongClickListener(v -> {
-                    executeBottomBarFunction(obj, true);
-                    return true;
-                });
-                bottomBarLayout.addView(btn);
-            }
+            BottomBarMigration.migrateIfNeeded(requireContext());
+            symbolInputView.bindEditor(editor);
+            symbolInputView.refreshData();
+            symbolInputView.onHostResume();
         } catch (Exception e) {
             if (getContext() != null) new ErrorUtil(getActivity()).showError(e);
         }
     }
 
-    private String resolveBottomBarLabel(String label) {
-        switch (label) {
-            case "Search": return getString(R.string.search);
-            case "Copy":
-            case "Copy selection": return getString(android.R.string.copy);
-            case "Cut":
-            case "Cut selection": return getString(R.string.cut);
-            case "Paste":
-            case "Paste selection": return getString(R.string.paste);
-            case "Insert text": return getString(R.string.insert_text);
-            case "Regex find and replace": return getString(R.string.regex_find_replace);
-            case "Copy line": return getString(R.string.copy_line);
-            case "Cut line": return getString(R.string.cut_line);
-            case "Delete line": return getString(R.string.delete_line);
-            case "Empty line": return getString(R.string.empty_line);
-            case "Replace line": return getString(R.string.replace_line);
-            default: return label;
-        }
-    }
-
-    private void executeBottomBarFunction(JSONObject obj, boolean isLongPress) {
-        String actionKey = isLongPress ? "longAction" : "action";
-        String data1Key = isLongPress ? "longData1" : "data1";
-        String data2Key = isLongPress ? "longData2" : "data2";
-        String action = obj.optString(actionKey);
-        if (TextUtils.isEmpty(action)) return;
-        if (action.equalsIgnoreCase("Search")) {
-            goToMatch(true);
-            return;
-        }
-        Cursor cursor = editor.getCursor();
-        Content content = editor.getText();
-        int line = cursor.getLeftLine();
-        String lineText = content.getLineString(line);
+    private void executeBottomBarCustomAction(int actionId, String text, String secondText, String options) {
         try {
-            switch (action) {
-                case "Insert text":
-                    String text = obj.optString(data1Key);
-                    content.insert(cursor.getLeftLine(), cursor.getLeftColumn(), text);
+            switch (actionId) {
+                case BottomBarMigration.ACTION_SEARCH:
+                    goToMatch(true);
                     break;
-                case "Regex find and replace": {
-                    String findRegex = obj.optString(data1Key);
-                    String replaceStr = obj.optString(data2Key);
-                    if (TextUtils.isEmpty(findRegex)) break;
-                    String allText = content.toString();
-                    Matcher m = Pattern.compile(findRegex).matcher(allText);
-                    int cursorOffset = Math.min(cursor.getLeft(), allText.length());
-                    boolean found = false;
-                    while (m.find()) {
-                        if (m.end() > cursorOffset) { found = true; break; }
-                    }
-                    if (!found) {
-                        Extensions.showMessage(requireActivity(), getString(R.string.no_matches_found));
-                        break;
-                    }
-                    StringBuffer sb = new StringBuffer();
-                    m.appendReplacement(sb, replaceStr == null ? "" : replaceStr);
-                    String replacement = sb.substring(m.start()); // strip the untouched prefix
-                    CharPosition s =
-                            content.getIndexer().getCharPosition(m.start());
-                    CharPosition e =
-                            content.getIndexer().getCharPosition(m.end());
-                    content.beginBatchEdit();
-                    content.replace(s.line, s.column, e.line, e.column, replacement);
-                    content.endBatchEdit();
+                case BottomBarMigration.ACTION_FIND_REPLACE:
+                    // Buttons created before the options feature behaved as regex + match case
+                    performFindAndReplace(text, secondText, options == null ? "rc" : options);
                     break;
-                }
-                case "Copy selection": copySelection(); break;
-                case "Cut selection": cutSelection(); break;
-                case "Paste selection": pasteSelection(); break;
-                case "Copy line": setClipboard(lineText); break;
-                case "Cut line":
-                    setClipboard(lineText);
-                    content.delete(line, 0, line, content.getColumnCount(line));
-                    break;
-                case "Delete line":
-                    content.delete(line, 0, line, content.getColumnCount(line));
-                    if (line < content.getLineCount() - 1)
-                        content.delete(line, content.getColumnCount(line), line + 1, 0);
-                    break;
-                case "Empty line":
-                    content.delete(line, 0, line, content.getColumnCount(line));
-                    break;
-                case "Replace line":
+                case BottomBarMigration.ACTION_REPLACE_LINE_CLIPBOARD: {
+                    Cursor cursor = editor.getCursor();
+                    Content content = editor.getText();
+                    int line = cursor.getLeftLine();
                     CharSequence clip = getClipboard();
                     if (clip != null)
                         content.replace(line, 0, line, content.getColumnCount(line), clip);
                     break;
+                }
             }
+        } catch (Exception e) {
+            new ErrorUtil(getActivity()).showError(e);
+        }
+    }
+
+    private void performFindAndReplace(String findText, String replaceWith, String options) {
+        if (TextUtils.isEmpty(findText)) return;
+        Cursor cursor = editor.getCursor();
+        Content content = editor.getText();
+        boolean regex = options != null && options.indexOf('r') >= 0;
+        boolean matchCase = options != null && options.indexOf('c') >= 0;
+        boolean replaceAll = options != null && options.indexOf('a') >= 0;
+
+        String allText = content.toString();
+        try {
+            String pattern = regex ? findText : Pattern.quote(findText);
+            int flags = Pattern.MULTILINE | (matchCase ? 0 : Pattern.CASE_INSENSITIVE);
+            Matcher m = Pattern.compile(pattern, flags).matcher(allText);
+            String replacementSource = replaceWith == null ? "" : replaceWith;
+
+            if (replaceAll) {
+                StringBuffer sb = new StringBuffer();
+                int count = 0;
+                while (m.find()) {
+                    m.appendReplacement(sb, regex ? replacementSource : Matcher.quoteReplacement(replacementSource));
+                    count++;
+                }
+                if (count == 0) {
+                    Extensions.showMessage(requireActivity(), getString(R.string.no_matches_found));
+                    return;
+                }
+                m.appendTail(sb);
+                int lastLine = content.getLineCount() - 1;
+                content.beginBatchEdit();
+                content.replace(0, 0, lastLine, content.getColumnCount(lastLine), sb.toString());
+                content.endBatchEdit();
+                // jumpToLine moves the caret to (line, 0); always re-apply the
+                // exact caret AFTER it or the position is silently lost.
+                editor.jumpToLine(0);
+                editor.setSelection(0, 0);
+                Extensions.showMessage(requireActivity(), getString(R.string.symbol_replaced_matches, count));
+                return;
+            }
+
+            // Replace next: the caret is left at the END of the previous replacement, and the
+            // next search starts from there, so a replacement that still matches the pattern
+            // (e.g. const/4 v0 -> const/4 v0, 0x1#) is never re-matched on the same spot.
+            int from = Math.min(cursor.getRight(), allText.length());
+            boolean found = m.find(from);
+            if (!found && from > 0) found = m.find(0); // wrap around to the start once
+            if (!found) {
+                Extensions.showMessage(requireActivity(), getString(R.string.no_matches_found));
+                return;
+            }
+            String replacement;
+            if (regex) {
+                StringBuffer sb = new StringBuffer();
+                m.appendReplacement(sb, replacementSource);
+                replacement = sb.substring(m.start()); // strip the untouched prefix
+            } else {
+                replacement = replacementSource;
+            }
+            CharPosition start = content.getIndexer().getCharPosition(m.start());
+            CharPosition end = content.getIndexer().getCharPosition(m.end());
+            content.beginBatchEdit();
+            content.replace(start.line, start.column, end.line, end.column, replacement);
+            content.endBatchEdit();
+            // Caret after the replacement + scroll there, so repeated taps walk forward.
+            // Select the replacement exactly like EditorSearcher.gotoNext() selects a
+            // match (position 6 = caret at the region end): identical snap/scroll
+            // animation to the regular search arrows, and cursor.getRight() — the
+            // anchor of the next search below — lands at the END of the replacement
+            // so the next press continues after it instead of re-replacing this one.
+            CharPosition newEnd = content.getIndexer().getCharPosition(
+                    m.start() + replacement.length());
+            editor.setSelectionRegion(start.line, start.column, newEnd.line, newEnd.column, 6);
         } catch (Exception e) {
             new ErrorUtil(getActivity()).showError(e);
         }
@@ -1255,9 +1263,15 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
 
     private static String detectScope(String name) {
         if (name == null) return null;
-        String n = name.toLowerCase(Locale.ROOT);
+        String n = name.trim().toLowerCase(Locale.ROOT);
         int slash = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
         if (slash >= 0) n = n.substring(slash + 1);
+        while (n.endsWith(")") && n.contains("(")) {
+            int open = n.lastIndexOf('(');
+            n = n.substring(0, open).trim();
+        }
+        int q = n.indexOf('?');
+        if (q >= 0) n = n.substring(0, q);
         int dot = n.lastIndexOf('.');
         if (dot < 0 || dot == n.length() - 1) return null;
         switch (n.substring(dot + 1)) {
@@ -1291,6 +1305,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
             case "sh":
             case "bash": return "source.shell";
             case "prop":
+            case "properties":
             case "ini":
             case "conf":
             case "cfg": return "source.prop";
@@ -1542,10 +1557,26 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
         if (!isSmali) return;
         new Handler(Looper.getMainLooper()).post(() -> {
             try {
-                saveSmaliCodeToFile(editor.getText().toString(), tempSmaliPath, path -> {
-                    if (getActivity() instanceof DexEditorActivity)
-                        ((DexEditorActivity) getActivity()).showSmaliNavigation(path, title, editor.getCursor().getLeftLine());
-                });
+                // Snapshot on the UI thread, but write the (potentially large) temp file on a
+                // worker: the navigator reads it back on its own thread, so a UI-thread write
+                // only stalls the main thread here.
+                final String content = editor.getText().toString();
+                final int cursorLine = editor.getCursor().getLeftLine();
+                new Thread(() -> {
+                    try {
+                        saveSmaliCodeToFile(content, tempSmaliPath, null);
+                    } catch (final Exception e) {
+                        new Handler(Looper.getMainLooper()).post(() -> {
+                            if (getContext() != null)
+                                Notify_MT.Notify(getContext(), getString(R.string.error), e.toString(), getString(R.string.close));
+                        });
+                        return;
+                    }
+                    new Handler(Looper.getMainLooper()).post(() -> {
+                        if (getActivity() instanceof DexEditorActivity)
+                            ((DexEditorActivity) getActivity()).showSmaliNavigation(tempSmaliPath, title, cursorLine);
+                    });
+                }).start();
             } catch (Exception e) {
                 if (getContext() != null)
                     Notify_MT.Notify(getContext(), getString(R.string.error), e.toString(), getString(R.string.close));

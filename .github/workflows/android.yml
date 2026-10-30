@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - '**'
   pull_request:
     branches:
       - main
@@ -23,7 +23,7 @@ env:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build APK (full)
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -43,14 +43,34 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
 
+      - name: Patch incompatible Material attribute
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = "android.R.attr.colorPrimaryContainer"
+          new = "com.google.android.material.R.attr.colorPrimary"
+
+          count = 0
+          for path in Path(".").rglob("*.java"):
+              source = path.read_text()
+              updated = source.replace(old, new)
+              if updated != source:
+                  path.write_text(updated)
+                  count += source.count(old)
+                  print(f"Patched: {path}")
+
+          print(f"Total replacements: {count}")
+          PY
+
       - name: Build APK
-        run: ./gradlew --no-daemon --stacktrace assembleDebug
+        run: ./gradlew --no-daemon --stacktrace assembleFullRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: MP-Manager-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -72,8 +92,28 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      - name: Patch incompatible Material attribute
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = "android.R.attr.colorPrimaryContainer"
+          new = "com.google.android.material.R.attr.colorPrimary"
+
+          count = 0
+          for path in Path(".").rglob("*.java"):
+              source = path.read_text()
+              updated = source.replace(old, new)
+              if updated != source:
+                  path.write_text(updated)
+                  count += source.count(old)
+                  print(f"Patched: {path}")
+
+          print(f"Total replacements: {count}")
+          PY
+
       - name: Run JVM unit tests
-        run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
+        run: ./gradlew --no-daemon --stacktrace testFullDebugUnitTest
 
       - name: Upload test report
         if: always()
@@ -81,8 +121,8 @@ jobs:
         with:
           name: unit-test-report
           path: |
-            app/build/reports/tests/testDebugUnitTest/
-            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testFullDebugUnitTest/
+            app/build/test-results/testFullDebugUnitTest/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -107,8 +147,28 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      - name: Patch incompatible Material attribute
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = "android.R.attr.colorPrimaryContainer"
+          new = "com.google.android.material.R.attr.colorPrimary"
+
+          count = 0
+          for path in Path(".").rglob("*.java"):
+              source = path.read_text()
+              updated = source.replace(old, new)
+              if updated != source:
+                  path.write_text(updated)
+                  count += source.count(old)
+                  print(f"Patched: {path}")
+
+          print(f"Total replacements: {count}")
+          PY
+
       - name: Run lint
-        run: ./gradlew --no-daemon --stacktrace lintDebug
+        run: ./gradlew --no-daemon --stacktrace lintFullDebug
 
       - name: Upload lint report
         if: always()
@@ -116,7 +176,7 @@ jobs:
         with:
           name: lint-report
           path: |
-            **/build/reports/lint-results-debug.html
-            **/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+            **/build/reports/lint-results-*.html
+            **/build/intermediates/lint_intermediate_text_report/**/*.txt
           if-no-files-found: ignore
           retention-days: 14

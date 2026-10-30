@@ -38,6 +38,26 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
 
+      - name: Patch incompatible Material attribute
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = "android.R.attr.colorPrimaryContainer"
+          new = "com.google.android.material.R.attr.colorPrimary"
+
+          count = 0
+          for path in Path(".").rglob("*.java"):
+              source = path.read_text()
+              updated = source.replace(old, new)
+              if updated != source:
+                  path.write_text(updated)
+                  count += source.count(old)
+                  print(f"Patched: {path}")
+
+          print(f"Total replacements: {count}")
+          PY
+
       - name: Resolve tag and version
         id: meta
         run: |
@@ -70,11 +90,11 @@ jobs:
 
       - name: Build release APK
         if: steps.signing.outputs.mode == 'release'
-        run: ./gradlew --no-daemon --stacktrace assembleRelease
+        run: ./gradlew --no-daemon --stacktrace assembleFullRelease
 
       - name: Build debug APK
         if: steps.signing.outputs.mode == 'debug'
-        run: ./gradlew --no-daemon --stacktrace assembleDebug
+        run: ./gradlew --no-daemon --stacktrace assembleFullDebug
 
       - name: Prepare signing key
         if: steps.signing.outputs.mode == 'release'
@@ -98,13 +118,16 @@ jobs:
           : "${KEY_PASSWORD:?RELEASE_KEY_PASSWORD is not configured}"
 
           build_tools="$(ls -d "${ANDROID_HOME}"/build-tools/* | sort -V | tail -n 1)"
-          unsigned="$(find app/build/outputs/apk/release -name '*-unsigned.apk' -print -quit)"
-          if [ -z "$unsigned" ]; then
-            echo "::error::no unsigned release APK was produced"
+          apk="$(find app/build/outputs/apk/full/release -name '*-unsigned.apk' -print -quit)"
+          if [ -z "$apk" ]; then
+            apk="$(find app/build/outputs/apk/full/release -name '*.apk' -print -quit)"
+          fi
+          if [ -z "$apk" ]; then
+            echo "::error::no release APK was produced"
             exit 1
           fi
 
-          "${build_tools}/zipalign" -p -f 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
+          "${build_tools}/zipalign" -p -f 4 "$apk" "$RUNNER_TEMP/aligned.apk"
           "${build_tools}/apksigner" sign \
             --ks "$RUNNER_TEMP/release.keystore" \
             --ks-pass "env:KEYSTORE_PASSWORD" \
@@ -123,7 +146,7 @@ jobs:
             cp "$RUNNER_TEMP/signed.apk" "MP-Manager-$version.apk"
             echo "unsigned_note=false" >> "$GITHUB_OUTPUT"
           else
-            src="$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)"
+            src="$(find app/build/outputs/apk/full/debug -name '*.apk' -print -quit)"
             test -n "$src"
             cp "$src" "MP-Manager-$version-debug.apk"
             echo "unsigned_note=true" >> "$GITHUB_OUTPUT"

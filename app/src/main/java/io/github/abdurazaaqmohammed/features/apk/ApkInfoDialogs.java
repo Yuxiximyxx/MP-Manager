@@ -49,7 +49,6 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.FileProvider;
 import androidx.preference.PreferenceManager;
 
-import com.android.apksig.ApkVerifier;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.checkbox.MaterialCheckBox;
 import com.google.android.material.color.MaterialColors;
@@ -127,6 +126,16 @@ public class ApkInfoDialogs {
         this.manifestEditor = manifestEditor;
         this.signatures = signatures;
         this.overlay = overlay;
+    }
+
+    /**
+     * APK data multiplexing (full flavor): redirects entries that are identical
+     * to entries inside a stored embedded APK so the duplicated data is stored
+     * once, then signs with the raw-file V2/V3 signer. Lite shows an info
+     * dialog instead.
+     */
+    private void showMultiplexDialog(File file, String fileName) {
+        MultiplexLauncher.open(context, dialogUtil, pane1, file, fileName);
     }
 
     public void showDecompileOptionsDialog(File file, String fileName) {
@@ -329,7 +338,7 @@ public class ApkInfoDialogs {
                 .setNeutralButton(R.string.more, (dialog, which) -> {
                     // "View certificate" moved onto the Signatures row, which now opens the
                     // full signature sheet on tap.
-                    List<String> moreTitles = new ArrayList<>(Arrays.asList(context.rss.getString(R.string.sign_apk), context.rss.getString(R.string.optimize_apk), context.rss.getString(R.string.decompile_reandroid_apkeditor), context.rss.getString(R.string.refactor_obfuscated_resource_names), context.rss.getString(R.string.protect_reandroid_apkeditor), context.rss.getString(R.string.clone_apk), context.rss.getString(R.string.add_toast_dialog), context.rss.getString(R.string.remove_all_toasts), context.rss.getString(R.string.remove_signature), context.rss.getString(R.string.signature_health), context.rss.getString(R.string.manifest_toggles), context.rss.getString(R.string.permissions)));
+                    List<String> moreTitles = new ArrayList<>(Arrays.asList(context.rss.getString(R.string.sign_apk), context.rss.getString(R.string.optimize_apk), context.rss.getString(R.string.decompile_reandroid_apkeditor), context.rss.getString(R.string.refactor_obfuscated_resource_names), context.rss.getString(R.string.protect_reandroid_apkeditor), context.rss.getString(R.string.clone_apk), context.rss.getString(R.string.add_toast_dialog), context.rss.getString(R.string.remove_all_toasts), context.rss.getString(R.string.remove_signature), context.rss.getString(R.string.signature_health), context.rss.getString(R.string.manifest_toggles), context.rss.getString(R.string.permissions), context.rss.getString(R.string.npatch_integrated), context.rss.getString(R.string.multiplex_apk)));
                     final int builtinCount = moreTitles.size();
                     final List<ApkMoreAction> pluginMore =
                             ExtensionRegistry.apkActions();
@@ -663,6 +672,8 @@ public class ApkInfoDialogs {
                     else if (which1 == 9) signatures.showSignatureHealthDialog(file);
                     else if (which1 == 10) manifestEditor.showManifestTogglesDialog(file);
                     else if (which1 == 11) manifestEditor.showPermissionsDialog(file);
+                    else if (which1 == 12) XposedPatcherLauncher.open(context, dialogUtil, pane1, file, fileName);
+                    else if (which1 == 13) showMultiplexDialog(file, fileName);
                     else {
                         int pluginIndex = which1 - builtinCount;
                         if (pluginIndex >= 0 && pluginIndex < pluginMore.size()) {
@@ -1094,10 +1105,10 @@ public class ApkInfoDialogs {
      * half-way through the loader left the dialog showing "Loading…" forever,
      * which is what users reported as empty fields.
      */
-    private void showPlaceholders(androidx.appcompat.app.AlertDialog ad, CharSequence placeholder) {
+    private void showPlaceholders(AlertDialog ad, CharSequence placeholder) {
         try {
             if (ad.getWindow() == null) return;
-            android.view.View root = ad.getWindow().getDecorView();
+            View root = ad.getWindow().getDecorView();
             int[] ids = {R.id.apkTitle, R.id.apkVersionName, R.id.verCode, R.id.pkgName,
                     R.id.signaturesInApk, R.id.protectedDisplay, R.id.fileSize,
                     R.id.apkTargetSdk, R.id.apkMinSdk, R.id.apkCert, R.id.apkInstalled};

@@ -1,5 +1,6 @@
 package io.github.abdurazaaqmohammed.features.apk;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.text.TextUtils;
@@ -10,13 +11,14 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
 import java.io.File;
 import java.security.cert.X509Certificate;
 import java.util.List;
 
-import io.github.abdurazaaqmohammed.MPManager.MainActivity;
 import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.utils.ApkSignatureInfo;
 import io.github.abdurazaaqmohammed.utils.CertUtil;
@@ -36,7 +38,11 @@ public final class SignatureInfoDialog {
     private SignatureInfoDialog() {
     }
 
-    public static void show(MainActivity context, DialogUtil dialogUtil, File apk) {
+    public static void show(AppCompatActivity context, File apk) {
+        show(context, new DialogUtil(context), apk);
+    }
+
+    public static void show(AppCompatActivity context, DialogUtil dialogUtil, File apk) {
         ProgressManager pm = new ProgressManager(context, true).show();
         new Thread(() -> {
             final ApkSignatureInfo info;
@@ -44,9 +50,9 @@ public final class SignatureInfoDialog {
                 info = ApkSignatureInfo.analyze(apk);
             } catch (Throwable t) {
                 pm.dismiss();
-                context.handler.post(() -> {
+                context.runOnUiThread(() -> {
                     View view = errorView(context, context.getString(android.R.string.unknownName));
-                    dialogUtil.getDialogBuilder()
+                    (dialogUtil != null ? dialogUtil : new DialogUtil(context)).getDialogBuilder()
                             .setTitle(R.string.signature_info)
                             .setView(view)
                             .setPositiveButton(android.R.string.ok, null)
@@ -55,23 +61,24 @@ public final class SignatureInfoDialog {
                 return;
             }
             pm.dismiss();
-            context.handler.post(() -> {
+            context.runOnUiThread(() -> {
                 CharSequence all = flatten(context, info);
                 // The sheet already lays out every certificate field inline, so the
                 // separate "View certificate" copy is redundant; keep just Close/Copy.
-                androidx.appcompat.app.AlertDialog dialog = dialogUtil.getDialogBuilder()
+                DialogUtil du = dialogUtil != null ? dialogUtil : new DialogUtil(context);
+                AlertDialog dialog = du.getDialogBuilder()
                         .setTitle(R.string.signature_info)
                         .setView(build(context, info))
                         .setPositiveButton(R.string.close, null)
                         .setNegativeButton(android.R.string.copy, (d, w) -> CopyUtil.copyToClipboard(context, all))
                         .create();
                 dialog.show();
-                io.github.abdurazaaqmohammed.utils.DialogUtil.keepButtonsHorizontal(dialog);
+                DialogUtil.keepButtonsHorizontal(dialog);
             });
         }).start();
     }
 
-    private static View errorView(MainActivity context, String message) {
+    private static View errorView(Activity context, String message) {
         TextView tv = new TextView(context);
         tv.setText(message);
         int pad = dp(context, 16);
@@ -79,7 +86,7 @@ public final class SignatureInfoDialog {
         return tv;
     }
 
-    private static View build(MainActivity context, ApkSignatureInfo info) {
+    private static View build(Activity context, ApkSignatureInfo info) {
         ScrollView scroll = new ScrollView(context);
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -138,7 +145,7 @@ public final class SignatureInfoDialog {
         return scroll;
     }
 
-    private static String statusText(MainActivity context, ApkSignatureInfo info) {
+    private static String statusText(Context context, ApkSignatureInfo info) {
         switch (info.getStatus()) {
             case ApkSignatureInfo.STATUS_VERIFIED:
                 return context.getString(R.string.sig_status_verified);
@@ -151,7 +158,7 @@ public final class SignatureInfoDialog {
         }
     }
 
-    private static CharSequence flatten(MainActivity context, ApkSignatureInfo info) {
+    private static CharSequence flatten(Context context, ApkSignatureInfo info) {
         StringBuilder sb = new StringBuilder();
         sb.append("File: ").append(displayName(info.getApk())).append('\n');
         sb.append("Scheme: ").append(info.getSchemes()).append('\n');

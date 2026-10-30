@@ -27,6 +27,7 @@ import org.apache.commons.io.FilenameUtils;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -34,10 +35,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import io.github.abdurazaaqmohammed.MPManager.MainActivity;
 import io.github.abdurazaaqmohammed.MPManager.R;
+import io.github.abdurazaaqmohammed.MPManager.shizuku.ShizukuFile;
 import io.github.abdurazaaqmohammed.adapters.DialogAdapter;
+import io.github.abdurazaaqmohammed.data.prefs.ListPrefs;
 import io.github.abdurazaaqmohammed.plugins.ext.ExtensionRegistry;
 import io.github.abdurazaaqmohammed.plugins.ext.FileMenuAction;
 import io.github.abdurazaaqmohammed.plugins.ipc.ExternalActions;
@@ -51,6 +55,7 @@ import io.github.abdurazaaqmohammed.ui.activities.CompareTextActivity;
 import io.github.abdurazaaqmohammed.ui.dialogs.CompareArscDialog;
 import io.github.abdurazaaqmohammed.ui.dialogs.CompareDexOptionsDialog;
 import io.github.abdurazaaqmohammed.ui.dialogs.CompareZipDialog;
+import io.github.abdurazaaqmohammed.utils.ArchiveBrowseUtil;
 import io.github.abdurazaaqmohammed.utils.ArchiveUtil;
 import io.github.abdurazaaqmohammed.utils.AccessManager;
 import io.github.abdurazaaqmohammed.utils.DialogUtil;
@@ -73,6 +78,12 @@ public class MainFilesArrayAdapter extends RecyclerView.Adapter<MainFilesArrayAd
     public final Object[] values;
     public final boolean isInZip;
     public final String currentZipPath;
+    /**
+     * True when the browsed archive is a zip-family container whose entries can
+     * be rewritten in place. 7z/rar/tar are browse-only, so mutating menu items
+     * are hidden inside them.
+     */
+    public final boolean archiveMutable;
     private boolean isSearchResultsMode = false;
 
     public void setSearchResultsMode(boolean mode) {
@@ -90,6 +101,9 @@ public class MainFilesArrayAdapter extends RecyclerView.Adapter<MainFilesArrayAd
     private final ChecksumDialogs checksumDialogs;
     private final FilePropertiesDialog propertiesDialog;
     private final FileOperationsHelper fileOps;
+    public FileOperationsHelper getFileOperations() {
+        return fileOps;
+    }
     private final ApkToolsHandler apkTools;
     private final CommandHelper commandHelper;
     private final BatchImageTools batchImages;
@@ -98,6 +112,7 @@ public class MainFilesArrayAdapter extends RecyclerView.Adapter<MainFilesArrayAd
         return fileOpener;
     }
     private final EntryDialogs entryDialogs;
+    private final ListPrefs listPrefs;
 
     /** Row metrics snapshotted once: bind previously re-read prefs per row. */
     private final float nameTextSize;
@@ -235,7 +250,7 @@ public class MainFilesArrayAdapter extends RecyclerView.Adapter<MainFilesArrayAd
      * links for isDirectory/isFile, so this is display-only there).
      */
     static boolean isSymlink(File f) {
-        if (f instanceof io.github.abdurazaaqmohammed.MPManager.shizuku.ShizukuFile sf) return sf.isLink();
+        if (f instanceof ShizukuFile sf) return sf.isLink();
         try {
             return !f.getCanonicalPath().equals(f.getAbsolutePath());
         } catch (Exception e) {
@@ -319,10 +334,12 @@ public class MainFilesArrayAdapter extends RecyclerView.Adapter<MainFilesArrayAd
             this.upZipPath = up != null ? up.getFullPath() : null;
             this.upZipFile = up != null ? up.getZipFile() : null;
             this.upFile = null;
+            this.archiveMutable = ArchiveBrowseUtil.isZipLike(this.upZipFile);
         } else {
             this.upFile = (File) parent;
             this.upZipFile = null;
             this.upZipPath = null;
+            this.archiveMutable = false;
         }
         int scale = UiPrefs.getScale(context);
         this.nameTextSize = UiPrefs.nameSize(scale);
@@ -332,6 +349,7 @@ public class MainFilesArrayAdapter extends RecyclerView.Adapter<MainFilesArrayAd
         uiHelper = context.uiHelper;
         iconLoader = new FileIconLoader(context, isInZip);
         manifestEditor = new ApkManifestEditor(context, dialogUtil, uiHelper);
+        listPrefs = new ListPrefs(context);
         checksumDialogs = new ChecksumDialogs(context, dialogUtil);
         propertiesDialog = new FilePropertiesDialog(context, dialogUtil, checksumDialogs);
         fileOps = new FileOperationsHelper(context, dialogUtil, this);
@@ -623,6 +641,21 @@ public class MainFilesArrayAdapter extends RecyclerView.Adapter<MainFilesArrayAd
         try {
             holder.fileNameView.setTextColor(context.isGreen(pane1, fileName) ? GREEN_NAME : holder.defaultNameColor);
         } catch (Exception ignored) {}
+        boolean isHidden = false;
+        if (position > 0) {
+            if (file != null) {
+                isHidden = file.getName().startsWith(".") || file.isHidden() || listPrefs.manuallyHidden().contains(file.getPath());
+            } else if (entry != null) {
+                isHidden = entry.getName().startsWith(".") || listPrefs.manuallyHidden().contains(entry.getFullPath());
+            }
+        }
+        if (isHidden) {
+            holder.fileNameView.setAlpha(0.55f);
+            holder.fileIconView.setAlpha(0.55f);
+        } else {
+            holder.fileNameView.setAlpha(1.0f);
+            holder.fileIconView.setAlpha(1.0f);
+        }
         final int finalPosition = position;
         final File finalFile = file;
         final ZipEntryInfo finalEntry = entry;
@@ -682,11 +715,41 @@ final View.OnClickListener originalClickListener;
             try {
                 boolean multi = !selectedPositions.isEmpty();
                 String direction = pane1 ? "->" : "<-";
+                boolean canMutate = !isInZip || archiveMutable;
                 List<FileMenuOrder.MenuItem> visibleMenu = new ArrayList<>();
                 visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.COPY, FileMenuOrder.labelFor(context, FileMenuOrder.COPY, direction)));
-                visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.MOVE, FileMenuOrder.labelFor(context, FileMenuOrder.MOVE, direction)));
-                visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.RENAME, FileMenuOrder.labelFor(context, FileMenuOrder.RENAME, direction)));
-                visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.DELETE, FileMenuOrder.labelFor(context, FileMenuOrder.DELETE, direction)));
+                if (canMutate) {
+                    visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.MOVE, FileMenuOrder.labelFor(context, FileMenuOrder.MOVE, direction)));
+                    visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.RENAME, FileMenuOrder.labelFor(context, FileMenuOrder.RENAME, direction)));
+                    visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.DELETE, FileMenuOrder.labelFor(context, FileMenuOrder.DELETE, direction)));
+                }
+
+                final List<String> targetPaths = new ArrayList<>();
+                if (multi) {
+                    for (int bp : selectedPositions) {
+                        if (bp >= 0 && bp < values.length) {
+                            Object obj = values[bp];
+                            if (obj instanceof File) targetPaths.add(((File) obj).getPath());
+                            else if (obj instanceof ZipEntryInfo) targetPaths.add(((ZipEntryInfo) obj).getFullPath());
+                        }
+                    }
+                } else {
+                    if (file != null) targetPaths.add(file.getPath());
+                    else if (entry != null) targetPaths.add(entry.getFullPath());
+                }
+
+                Set<String> manualHidden = listPrefs.manuallyHidden();
+                boolean allAlreadyHidden = !targetPaths.isEmpty();
+                for (String tp : targetPaths) {
+                    if (!manualHidden.contains(tp)) {
+                        allAlreadyHidden = false;
+                        break;
+                    }
+                }
+                final boolean finalAllAlreadyHidden = allAlreadyHidden;
+                String hideLabel = allAlreadyHidden ? context.getString(R.string.unhide) : context.getString(R.string.hide);
+                visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.HIDE, hideLabel));
+
                 visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.COMPRESS, FileMenuOrder.labelFor(context, FileMenuOrder.COMPRESS, direction)));
                 visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.PROPERTIES, FileMenuOrder.labelFor(context, FileMenuOrder.PROPERTIES, direction)));
                 visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.SHARE, FileMenuOrder.labelFor(context, FileMenuOrder.SHARE, direction)));
@@ -724,7 +787,9 @@ final View.OnClickListener originalClickListener;
                     }
                 }
 
-                if (!multi && !isInZip && !file.isDirectory() && (ArchiveUtil.isSupportedArchive(fileName) || ArchiveUtil.isMiuiOrAndroidBackup(file))) {
+                // The archive test is content-based, so Extract is offered even
+                // when the file's extension is missing or wrong.
+                if (!multi && !isInZip && !file.isDirectory() && (ArchiveUtil.isSupportedArchive(fileName) || ArchiveBrowseUtil.isBrowsable(file) || ArchiveUtil.isMiuiOrAndroidBackup(file))) {
                     visibleMenu.add(new FileMenuOrder.MenuItem(FileMenuOrder.EXTRACT, FileMenuOrder.labelFor(context, FileMenuOrder.EXTRACT, direction)));
                 }
 
@@ -1066,6 +1131,22 @@ final View.OnClickListener originalClickListener;
                                     case FileMenuOrder.DELETE:
                                         entryDialogs.showDeleteDialog(finalPosition, file, entry, multi);
                                         break;
+                                    case FileMenuOrder.HIDE:
+                                        if (finalAllAlreadyHidden) {
+                                            for (String tp : targetPaths) listPrefs.unhide(tp);
+                                        } else {
+                                            for (String tp : targetPaths) listPrefs.hide(tp);
+                                        }
+                                        if (multi) {
+                                            clearSelection();
+                                        }
+                                        context.runOnUiThread(() -> {
+                                            context.reloadCurrentFolder();
+                                            if (context.isSameLocationInPanes()) {
+                                                context.reloadPane(!pane1, false);
+                                            }
+                                        });
+                                        break;
                                     case FileMenuOrder.COMPRESS:
                                         entryDialogs.showCompressDialog(file, fileName, multi);
                                         break;
@@ -1105,9 +1186,9 @@ final View.OnClickListener originalClickListener;
                                                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Share " + only.getName()));
                                                 });
                                             } else if (shareFiles.size() > 1) {
-                                                List<Uri> uris = java.util.Collections.synchronizedList(new ArrayList<>());
-                                                java.util.concurrent.atomic.AtomicInteger pending =
-                                                        new java.util.concurrent.atomic.AtomicInteger(shareFiles.size());
+                                                List<Uri> uris = Collections.synchronizedList(new ArrayList<>());
+                                                AtomicInteger pending =
+                                                        new AtomicInteger(shareFiles.size());
                                                 for (File sf : shareFiles) {
                                                     fileOpener.withReadableCopy(sf, readable -> {
                                                         try {

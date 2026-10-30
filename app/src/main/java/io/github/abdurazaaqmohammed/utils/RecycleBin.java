@@ -10,8 +10,6 @@ import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.lang.reflect.Type;
@@ -113,6 +111,40 @@ public final class RecycleBin {
                 .putString("recycle_bin_dir", path == null ? "" : path).apply();
     }
 
+    private static String normalizePath(String path) {
+        if (path == null) return "";
+        String p = path.trim();
+        if (p.startsWith("/sdcard")) {
+            p = "/storage/emulated/0" + p.substring("/sdcard".length());
+        }
+        while (p.endsWith("/") && p.length() > 1) {
+            p = p.substring(0, p.length() - 1);
+        }
+        return p;
+    }
+
+    public static boolean isInsideBin(Context context, File file) {
+        if (file == null || context == null) return false;
+        File bin = binDir(context);
+        if (bin == null) return false;
+
+        String fileAbs = normalizePath(file.getAbsolutePath());
+        String binAbs = normalizePath(bin.getAbsolutePath());
+        if (!fileAbs.isEmpty() && !binAbs.isEmpty()) {
+            if (fileAbs.equals(binAbs) || fileAbs.startsWith(binAbs + "/")) return true;
+        }
+
+        try {
+            String fileCanon = normalizePath(file.getCanonicalPath());
+            String binCanon = normalizePath(bin.getCanonicalPath());
+            if (!fileCanon.isEmpty() && !binCanon.isEmpty()) {
+                if (fileCanon.equals(binCanon) || fileCanon.startsWith(binCanon + "/")) return true;
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
     public static final class RestoreResult {
         public final File restoredFile;
         public final boolean wasRenamed;
@@ -185,7 +217,7 @@ public final class RecycleBin {
     }
 
     private static final class AppGsonHolder {
-        static final Gson GSON = io.github.abdurazaaqmohammed.utils.AppGson.get();
+        static final Gson GSON = AppGson.get();
     }
 
     public static final class Meta {
@@ -209,7 +241,7 @@ public final class RecycleBin {
      * Returns true when the item ended up in the bin.
      */
     public static boolean moveToBin(Context context, File file, String reason) {
-        if (file == null || !file.exists()) return false;
+        if (file == null || !file.exists() || isInsideBin(context, file)) return false;
         long origLastMod = file.lastModified();
         File target = freeName(binDir(context), file.getName());
         try {
