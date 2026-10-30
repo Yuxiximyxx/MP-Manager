@@ -23,6 +23,8 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.snackbar.Snackbar;
 import com.google.android.material.textfield.TextInputEditText;
 
+import androidx.core.widget.CompoundButtonCompat;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -352,7 +354,7 @@ private View buildChecklistPane() {
             LinearLayout row = NotesUi.row(context);
             final CheckBox box = new CheckBox(context);
             box.setChecked(done);
-            box.setButtonTintList(ColorStateList.valueOf(accent));
+            CompoundButtonCompat.setButtonTintList(box, ColorStateList.valueOf(accent));
             box.setOnCheckedChangeListener((b, checked) -> {
                 String[] current = note.plain().split("\n", -1);
                 if (index < 0 || index >= current.length) return;

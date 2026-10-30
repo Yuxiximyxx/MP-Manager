@@ -12,6 +12,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.core.widget.CompoundButtonCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.card.MaterialCardView;
@@ -174,7 +175,7 @@ note.pinned = !note.pinned;
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         CheckBox pin = new CheckBox(ctx);
-        pin.setButtonTintList(ColorStateList.valueOf(accent));
+        CompoundButtonCompat.setButtonTintList(pin, ColorStateList.valueOf(accent));
         pin.setClickable(true);
         pin.setFocusable(false);
         head.addView(pin, new LinearLayout.LayoutParams(
