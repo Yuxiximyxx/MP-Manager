@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Keep the workflow actions current: a pinned action going stale is the most
+  # common way an otherwise healthy CI pipeline rots.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - '*'
