@@ -7,9 +7,11 @@ import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Build;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 
+import androidx.appcompat.widget.Toolbar;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
@@ -28,22 +30,31 @@ import io.github.abdurazaaqmohammed.core.ui.theme.ThemeRegistry;
  * {@code App}'s activity lifecycle callbacks and to dialogs at their own
  * show/onStart entry points.
  *
- * <p>Layout is edge-to-edge: the window draws behind the system bars and its
- * content is only inset at the top, so the app's own background continues
- * behind the transparent navigation bar instead of a separately tinted strip.
- * A view with id {@code bottomBar} keeps its bottom padding in step with the
- * navigation-bar inset, so a bottom toolbar's background extends under the bar
- * while its buttons stay above it.
+ * <p>Both bars are transparent and the window draws behind them. Content is
+ * inset on the sides only; the status-bar inset is applied to the screen's own
+ * header (a {@link Toolbar} or one of the known header ids) so the header keeps
+ * its background under the status bar, and the navigation-bar inset is applied
+ * to a {@code bottomBar} so a bottom toolbar's background extends under the bar
+ * while its buttons stay above it. Screens without a detectable header fall
+ * back to padding the content container, which keeps every screen usable.
  *
  * <p>Android 15+ already enforces edge-to-edge for applications targeting 35
- * and later and ignores {@code Window#setNavigationBarColor}; the colour writes
- * below therefore only matter on older releases, and the contrast scrim is
- * switched off wherever the platform still honours it.
+ * and later and ignores the bar colour setters; those calls therefore only
+ * matter on older releases, and the contrast scrims are switched off wherever
+ * the platform still honours them.
  */
 public final class SystemBars {
 
-    /** Original bottom padding of a padded bottom bar, keyed weakly. */
-    private static final Map<View, Integer> bottomBarBasePadding = new WeakHashMap<>();
+    /** Header ids used by MP Manager screens, checked after a Toolbar scan. */
+    private static final int[] HEADER_IDS = {
+            R.id.toolbar, R.id.topAppBar, R.id.settingsToolbar, R.id.tools_toolbar,
+            R.id.topBar, R.id._toolbar, R.id.drawer_toolbar, R.id.sharedEntryToolbar,
+            R.id.hexToolbar, R.id.compare_text_toolbar, R.id.compare_dex_toolbar,
+            R.id.linear_header, R.id.hexHeader
+    };
+
+    /** Original padding of a view we extend for the bars, keyed weakly. */
+    private static final Map<View, int[]> basePadding = new WeakHashMap<>();
 
     private SystemBars() {
     }
@@ -60,7 +71,8 @@ public final class SystemBars {
         // The app paints to the screen edges; content insets are applied by
         // {@link #applyContentInsets(Activity)}.
         WindowCompat.setDecorFitsSystemWindows(window, false);
-        apply(window, isLightNavigationBar(activity));
+        boolean lightIcons = isLightBars(activity);
+        applyBars(window, lightIcons, lightIcons, true);
     }
 
     /**
@@ -73,17 +85,18 @@ public final class SystemBars {
         if (dialog == null) return;
         Window window = dialog.getWindow();
         if (window == null) return;
-        apply(window, isLightNavigationBar(dialog.getContext()));
+        applyBars(window, false, isLightBars(dialog.getContext()), false);
     }
 
     /**
-     * Applies the window insets that the edge-to-edge layout needs: status bar
-     * and cutout on the top and sides, nothing at the bottom, so lists and
-     * backgrounds scroll behind the transparent navigation bar.
+     * Applies the window insets that the edge-to-edge layout needs.
      *
-     * <p>{@code R.id.bottomBar}, when the screen has one, is the exception: its
-     * background extends under the bar and its own padding grows by the
-     * navigation-bar inset, which keeps the buttons above the system bar.
+     * <p>Side insets always go on the content container. The top inset goes on
+     * the screen header (Toolbar or a known header id) so its background runs
+     * under the status bar; if no header is found the content container keeps
+     * the top padding so nothing slides under the clock. The bottom inset goes
+     * on {@code R.id.bottomBar} only, so lists and backgrounds scroll behind
+     * the transparent navigation bar.
      */
     public static void applyContentInsets(Activity activity) {
         if (activity == null || activity.isFinishing()) return;
@@ -94,19 +107,16 @@ public final class SystemBars {
         ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
             Insets bars = insets.getInsets(
                     WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-            v.setPadding(bars.left, bars.top, bars.right, 0);
+            v.setPadding(bars.left, 0, bars.right, 0);
+            View header = findHeader(v);
+            if (header != null) {
+                padTop(header, bars.top);
+            } else {
+                v.setPadding(bars.left, bars.top, bars.right, 0);
+            }
             View bottomBar = v.findViewById(R.id.bottomBar);
             if (bottomBar != null) {
-                Integer base = bottomBarBasePadding.get(bottomBar);
-                if (base == null) {
-                    base = bottomBar.getPaddingBottom();
-                    bottomBarBasePadding.put(bottomBar, base);
-                }
-                bottomBar.setPadding(
-                        bottomBar.getPaddingLeft(),
-                        bottomBar.getPaddingTop(),
-                        bottomBar.getPaddingRight(),
-                        base + bars.bottom);
+                padBottom(bottomBar, bars.bottom);
             }
             return WindowInsetsCompat.CONSUMED;
         });
@@ -114,9 +124,13 @@ public final class SystemBars {
     }
 
     /**
-     * Whether the current theme wants dark icons on the navigation bar.
+     * Whether the current theme wants dark icons on the system bars.
      */
     public static boolean isLightNavigationBar(Context context) {
+        return isLightBars(context);
+    }
+
+    private static boolean isLightBars(Context context) {
         if (context == null) return false;
         try {
             String id = ThemeRegistry.getCurrentId(context);
@@ -130,11 +144,60 @@ public final class SystemBars {
         }
     }
 
-    private static void apply(Window window, boolean lightBars) {
+    /** First Toolbar in the tree, or a known header id. */
+    private static View findHeader(View content) {
+        View toolbar = firstToolbar(content);
+        if (toolbar != null) return toolbar;
+        for (int id : HEADER_IDS) {
+            View candidate = content.findViewById(id);
+            if (candidate != null) return candidate;
+        }
+        return null;
+    }
+
+    private static View firstToolbar(View view) {
+        if (view instanceof Toolbar) return view;
+        if (view instanceof ViewGroup group) {
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View found = firstToolbar(group.getChildAt(i));
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static void padTop(View view, int inset) {
+        int[] base = basePadding.get(view);
+        if (base == null) {
+            base = new int[]{view.getPaddingLeft(), view.getPaddingTop(),
+                    view.getPaddingRight(), view.getPaddingBottom()};
+            basePadding.put(view, base);
+        }
+        view.setPadding(base[0], base[1] + inset, base[2], base[3]);
+    }
+
+    private static void padBottom(View view, int inset) {
+        int[] base = basePadding.get(view);
+        if (base == null) {
+            base = new int[]{view.getPaddingLeft(), view.getPaddingTop(),
+                    view.getPaddingRight(), view.getPaddingBottom()};
+            basePadding.put(view, base);
+        }
+        view.setPadding(base[0], base[1], base[2], base[3] + inset);
+    }
+
+    private static void applyBars(Window window, boolean lightStatusIcons,
+                                  boolean lightNavigationIcons, boolean statusBar) {
         if (window == null) return;
 
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        if (statusBar) {
+            window.setStatusBarColor(Color.TRANSPARENT);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.setStatusBarContrastEnforced(false);
+            }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
             window.setNavigationBarColor(Color.TRANSPARENT);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 window.setNavigationBarDividerColor(Color.TRANSPARENT);
@@ -146,8 +209,13 @@ public final class SystemBars {
 
         WindowInsetsControllerCompat controller =
                 WindowCompat.getInsetsController(window, window.getDecorView());
-        if (controller != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            controller.setAppearanceLightNavigationBars(lightBars);
+        if (controller != null) {
+            if (statusBar) {
+                controller.setAppearanceLightStatusBars(lightStatusIcons);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                controller.setAppearanceLightNavigationBars(lightNavigationIcons);
+            }
         }
     }
 }

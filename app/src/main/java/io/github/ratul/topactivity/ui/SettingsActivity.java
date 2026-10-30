@@ -30,9 +30,6 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.StringRes;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -115,11 +112,9 @@ public class SettingsActivity extends AppCompatActivity {
         fragment = (SettingsFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.preferences_container);
 
-        ViewCompat.setOnApplyWindowInsetsListener(baseView, (v, insets) -> {
-            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
-            return insets;
-        });
+        // System bars are handled globally by SystemBars (status header padding,
+        // no bottom padding so the list runs behind the navigation bar). Padding
+        // all four sides here used to leave a solid strip under the list.
     }
 
     private void setupToolbar() {
