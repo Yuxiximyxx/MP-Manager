@@ -5,5 +5,7 @@
         <item name="android:navigationBarColor">?attr/colorSurface</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="alertDialogTheme">@style/AppCompat.Dialog</item>
+        <item name="materialAlertDialogTheme">@style/AppCompat.Dialog</item>
     </style>
 </resources>

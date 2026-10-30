@@ -25,7 +25,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
+import android.view.Window;
 import android.widget.Toast;
+
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 import io.github.abdurazaaqmohammed.plugins.packs.PackManager;
 import io.github.codehasan.colorpicker.extensions.Extensions;
@@ -57,6 +63,36 @@ public class App extends MultiDexApplication {
         return instance;
     }
 
+    /**
+     * Decor views already watched for window-focus changes. Weak keys so a
+     * destroyed window cannot pin its activity.
+     */
+    private static final Map<View, Boolean> navBarWatched =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    /**
+     * Applies the immersive navigation bar and keeps it applied: the deferred
+     * re-apply covers bars recoloured later in onCreate/onResume, and the focus
+     * listener covers every window regaining focus (a dismissed dialog,
+     * transient system bars, returning to the task) without touching layout.
+     */
+    private static void applyNavigationBar(Activity activity) {
+        if (activity == null) return;
+        SystemBars.applyImmersiveNavigationBar(activity);
+        Window window = activity.getWindow();
+        if (window == null) return;
+        final View decor = window.getDecorView();
+        if (decor == null) return;
+        decor.post(() -> SystemBars.applyImmersiveNavigationBar(activity));
+        synchronized (navBarWatched) {
+            if (navBarWatched.containsKey(decor)) return;
+            navBarWatched.put(decor, Boolean.TRUE);
+        }
+        decor.getViewTreeObserver().addOnWindowFocusChangeListener(focused -> {
+            if (focused) SystemBars.applyImmersiveNavigationBar(activity);
+        });
+    }
+
     @Override
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
@@ -73,7 +109,7 @@ public class App extends MultiDexApplication {
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override
             public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
-                SystemBars.applyImmersiveNavigationBar(activity);
+                applyNavigationBar(activity);
             }
 
             @Override
@@ -82,9 +118,11 @@ public class App extends MultiDexApplication {
 
             @Override
             public void onActivityResumed(Activity activity) {
-                // A theme switch recreates activities; reapply so the icon colour
-                // follows the new theme even when the window was reused.
-                SystemBars.applyImmersiveNavigationBar(activity);
+                // A theme switch recreates activities, and screens may recolour the
+                // bars from their own onCreate/onResume; reapply after that code ran
+                // so the icon colour follows the new theme even when the window was
+                // reused.
+                applyNavigationBar(activity);
             }
 
             @Override

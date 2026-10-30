@@ -71,6 +71,7 @@ import io.github.abdurazaaqmohammed.utils.InstallUtil;
 import io.github.abdurazaaqmohammed.utils.MimeUtil;
 import io.github.abdurazaaqmohammed.utils.UiPrefs;
 import io.github.codehasan.colorpicker.extensions.Extensions;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 
 public class MainFilesArrayAdapter extends RecyclerView.Adapter<MainFilesArrayAdapter.ViewHolder> {
 
@@ -1229,9 +1230,15 @@ final View.OnClickListener originalClickListener;
                 }));
                 if (menuSheet != null) {
                     menuSheet.setContentView(menuView);
-                    context.runOnUiThread(menuSheet::show);
+                    context.runOnUiThread(() -> {
+                        menuSheet.show();
+                        SystemBars.applyImmersiveNavigationBar(menuSheet);
+                    });
                 } else {
-                    context.runOnUiThread(() -> menuDialog[0] = menuDialogBuilder.show());
+                    context.runOnUiThread(() -> {
+                        menuDialog[0] = menuDialogBuilder.show();
+                        SystemBars.applyImmersiveNavigationBar(menuDialog[0]);
+                    });
                 }
             } catch (Exception e) {
                 try {

@@ -53,6 +53,7 @@ import modder.hub.dexeditor.views.FastScrollerRecyclerView;
 
 import android.text.*;
 import android.text.style.*;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 
 /*
 Author @developer-krushna
@@ -87,6 +88,12 @@ public class SmaliLabelDialog extends Dialog {
 		setContentView(recyclerView);
 	}
 	
+	@Override
+	public void show() {
+		super.show();
+		SystemBars.applyImmersiveNavigationBar(this);
+	}
+
 	private class LabelAdapter extends RecyclerView.Adapter<LabelAdapter.ViewHolder> {
 		private List<String> filteredItems = new ArrayList<>();
 		

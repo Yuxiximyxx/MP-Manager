@@ -860,14 +860,14 @@ public class MainActivity extends BaseActivity implements PaneNavigationControll
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             int surfaceColor = BuiltInThemes.BLACK_ID.equals(pluginId) ? Color.BLACK : MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurface, Color.TRANSPARENT);
             getWindow().setStatusBarColor(surfaceColor);
-            getWindow().setNavigationBarColor(surfaceColor);
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M && lightBars) {
                 // Old devices can't render dark status bar icons; use a dark bar so icons stay visible
                 int darkBar = MaterialColors.getColor(this, android.R.attr.colorPrimary, surfaceColor);
                 getWindow().setStatusBarColor(darkBar);
-                getWindow().setNavigationBarColor(darkBar);
             }
         }
+        // The navigation bar is owned globally by SystemBars (transparent,
+        // no divider, no contrast scrim); setting a colour here would fight it.
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
         controller.setAppearanceLightStatusBars(lightBars);
         controller.setAppearanceLightNavigationBars(lightBars);

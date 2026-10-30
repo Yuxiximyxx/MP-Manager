@@ -266,7 +266,8 @@ public class APKExtractorActivity extends BaseActivity {
         loadApps();
         if (!LegacyUtils.supportsWriteExternalStorage) {
             getWindow().setStatusBarContrastEnforced(true);
-            getWindow().setNavigationBarContrastEnforced(true);
+            // The navigation bar stays transparent: SystemBars owns the immersive
+            // treatment globally, so enforcing contrast here would repaint it.
         }
 
         findViewById(R.id.settingsButton).setOnClickListener(v -> {

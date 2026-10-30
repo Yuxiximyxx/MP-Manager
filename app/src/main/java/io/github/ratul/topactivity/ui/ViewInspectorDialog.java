@@ -48,6 +48,7 @@ import io.github.ratul.topactivity.services.ViewNodeSnapshot;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 
 public class ViewInspectorDialog extends Dialog {
 
@@ -114,6 +115,7 @@ public class ViewInspectorDialog extends Dialog {
             window.setAttributes(attrs);
             window.setDimAmount(0f);
             window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+            SystemBars.applyImmersiveNavigationBar(this);
             window.getDecorView().setBackgroundColor(Color.TRANSPARENT);
         }
         super.show();

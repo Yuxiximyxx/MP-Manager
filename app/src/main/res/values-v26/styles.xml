@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    API 26+ dialog window: the navigation bar is immersive there too. It is kept
+    out of values/styles.xml because API 23-25 can only draw white navigation
+    icons, so a transparent bar would be unreadable on a light dialog.
+-->
+<resources>
+    <style name="AppCompat.Dialog" parent="@style/ThemeOverlay.Material3.Dialog.Alert">
+        <item name="android:windowTitleStyle">@style/RtlOverlay.DialogWindowTitle.AppCompat</item>
+        <item name="buttonBarButtonStyle">@style/Widget.Material3.Button.TextButton.Dialog.Flush</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:navigationBarDividerColor">@android:color/transparent</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="AppCompat.Dialog.Light" parent="AppCompat.Dialog">
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

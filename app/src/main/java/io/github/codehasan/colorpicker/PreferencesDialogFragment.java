@@ -10,6 +10,7 @@ import androidx.preference.PreferenceFragmentCompat;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import io.github.abdurazaaqmohammed.MPManager.R;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 
 public class PreferencesDialogFragment extends DialogFragment {
 
@@ -28,6 +29,7 @@ public class PreferencesDialogFragment extends DialogFragment {
     @Override
     public void onStart() {
         super.onStart();
+        SystemBars.applyImmersiveNavigationBar(getDialog());
         if (getChildFragmentManager().findFragmentByTag(TAG_PREFERENCES) == null) {
             getChildFragmentManager().beginTransaction()
                     .replace(R.id.fcv, new PreferencesFragment(), TAG_PREFERENCES)

@@ -102,8 +102,16 @@ import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.utils.ErrorUtil;
 import io.github.abdurazaaqmohammed.utils.FileUtils;
 import io.github.abdurazaaqmohammed.utils.PasswordEncryptor;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 
 public class KeyStoreMakerDialog extends DialogFragment {
+    @Override
+    public void onStart() {
+        super.onStart();
+        SystemBars.applyImmersiveNavigationBar(getDialog());
+    }
+
+
 
     private static final String PREF_NAME = "KeyStore";
 

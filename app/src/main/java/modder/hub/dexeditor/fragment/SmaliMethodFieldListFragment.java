@@ -112,6 +112,7 @@ import modder.hub.dexeditor.utils.DexUsageHelper;
 import modder.hub.dexeditor.utils.ViewAnimationHelper;
 import modder.hub.dexeditor.views.FastScrollerRecyclerView;
 import io.github.abdurazaaqmohammed.ui.fragment.UnifiedEditorFragment;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 
 /*
 Author @developer-krushna
@@ -270,6 +271,7 @@ public class SmaliMethodFieldListFragment extends DialogFragment {
     @Override
     public void onStart() {
         super.onStart();
+        SystemBars.applyImmersiveNavigationBar(getDialog());
         Dialog dialog = getDialog();
         if (dialog != null) {
             // Get screen width

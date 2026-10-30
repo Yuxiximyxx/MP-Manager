@@ -34,8 +34,16 @@ import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.commandhelper.ProfileManager;
 import io.github.abdurazaaqmohammed.commandhelper.ProfileManager.Profile;
 import io.github.codehasan.colorpicker.extensions.Extensions;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 
 public class CommandHelperSettingsDialog extends DialogFragment {
+    @Override
+    public void onStart() {
+        super.onStart();
+        SystemBars.applyImmersiveNavigationBar(getDialog());
+    }
+
+
     private ProfileManager profileManager;
     private List<Profile> profiles;
     private ArrayAdapter<String> listAdapter;

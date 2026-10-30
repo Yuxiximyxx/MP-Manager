@@ -29,8 +29,16 @@ import java.util.List;
 
 import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.commandhelper.ProfileManager.Profile;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 
 public class SettingsDialogFragment extends DialogFragment {
+    @Override
+    public void onStart() {
+        super.onStart();
+        SystemBars.applyImmersiveNavigationBar(getDialog());
+    }
+
+
 
     private ProfileManager profileManager;
     private List<Profile> profiles;
