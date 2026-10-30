@@ -24,6 +24,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Bundle;
 import android.widget.Toast;
 
 import io.github.abdurazaaqmohammed.plugins.packs.PackManager;
@@ -34,6 +35,7 @@ import androidx.multidex.MultiDexApplication;
 
 import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.app.ServiceLocator;
+import io.github.abdurazaaqmohammed.core.ui.util.SystemBars;
 import io.github.abdurazaaqmohammed.utils.AppLogs;
 import io.github.ratul.topactivity.manager.NotificationUiManager;
 import io.github.ratul.topactivity.ui.ClipboardActivity;
@@ -66,6 +68,41 @@ public class App extends MultiDexApplication {
     public void onCreate() {
         super.onCreate();
         instance = this;
+        // Global navigation-bar immersion: applies to every activity, including the
+        // ones that do not extend BaseActivity, so the look cannot drift per screen.
+        registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
+            @Override
+            public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+                SystemBars.applyImmersiveNavigationBar(activity);
+            }
+
+            @Override
+            public void onActivityStarted(Activity activity) {
+            }
+
+            @Override
+            public void onActivityResumed(Activity activity) {
+                // A theme switch recreates activities; reapply so the icon colour
+                // follows the new theme even when the window was reused.
+                SystemBars.applyImmersiveNavigationBar(activity);
+            }
+
+            @Override
+            public void onActivityPaused(Activity activity) {
+            }
+
+            @Override
+            public void onActivityStopped(Activity activity) {
+            }
+
+            @Override
+            public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
+            }
+
+            @Override
+            public void onActivityDestroyed(Activity activity) {
+            }
+        });
         ServiceLocator.init(this);
         // Cold-start optimization: each pack costs an asset read, a signature
         // check (PackageManager IPC), a resources.arsc parse and a
