@@ -1,18 +1,37 @@
-name: Build MP-Manager APK
+name: Android CI
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+
+# One run per branch/PR: a newer push cancels the older, still-running build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep the on-disk Gradle caches small on hosted runners.
+  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3g
 
 jobs:
   build:
+    name: Build debug APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -21,35 +40,81 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Grant execute permission
-        run: chmod +x gradlew
-
-      - name: Patch incompatible Material attribute
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          old = "android.R.attr.colorPrimaryContainer"
-          new = "com.google.android.material.R.attr.colorPrimary"
-
-          count = 0
-          for path in Path(".").rglob("*.java"):
-              source = path.read_text()
-              updated = source.replace(old, new)
-              if updated != source:
-                  path.write_text(updated)
-                  count += source.count(old)
-                  print(f"Patched: {path}")
-
-          print(f"Total replacements: {count}")
-          PY
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
 
       - name: Build APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: MP-Manager-APK
-          path: app/build/outputs/apk/**/*.apk
+          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 14
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Run JVM unit tests
+        run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  lint:
+    name: Lint (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Advisory until the lint baseline is regenerated against the current AGP:
+    # a new warning must not block merges, but the report is always uploaded.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Run lint
+        run: ./gradlew --no-daemon --stacktrace lintDebug
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14
