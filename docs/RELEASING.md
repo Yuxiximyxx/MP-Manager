@@ -57,8 +57,12 @@ apksigner verify --print-certs MP-Manager-1.2.0.apk
 
 ## Notes
 
+- Without the four signing secrets the workflow does not fail: it builds the
+  debug variant, publishes `MP-Manager-<version>-debug.apk`, and states in the
+  release notes that the APK is debug-signed. Configure the secrets to switch
+  the same tag to a release-signed APK.
 - The `Lint (advisory)` job does not block the pipeline; download its report
-  from the run artifacts. Once `app/lint.xml` is regenerated against the
-  current AGP, the job can be made blocking by removing `continue-on-error`.
+  from the run artifacts. Once the remaining warnings are triaged, the job can
+  be made blocking by removing `continue-on-error`.
 - `Android CI` runs on every push to `main` and on every pull request: debug
   build, JVM unit tests, and the advisory lint report.

@@ -8,6 +8,9 @@ android {
 
     defaultConfig {
         minSdk 19
+        // Required by AGP whenever a module below API 21 turns on core library
+        // desugaring; the host app is already multi-dex.
+        multiDexEnabled true
     }
 
     compileOptions {
