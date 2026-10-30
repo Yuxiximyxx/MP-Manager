@@ -79,6 +79,7 @@ public class App extends MultiDexApplication {
     private static void applyNavigationBar(Activity activity) {
         if (activity == null) return;
         SystemBars.applyImmersiveNavigationBar(activity);
+        SystemBars.applyContentInsets(activity);
         Window window = activity.getWindow();
         if (window == null) return;
         final View decor = window.getDecorView();

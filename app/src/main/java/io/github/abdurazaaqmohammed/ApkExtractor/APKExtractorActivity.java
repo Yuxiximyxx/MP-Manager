@@ -227,7 +227,8 @@ public class APKExtractorActivity extends BaseActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
+        // Edge-to-edge is applied globally by SystemBars; content insets come from
+        // App's lifecycle callbacks so this screen matches the rest.
         handler = new Handler(Looper.getMainLooper());
         setContentView(R.layout.activity_extractor);
         MaterialToolbar toolbar = findViewById(R.id.toolbar);

@@ -1,15 +1,10 @@
 package io.github.abdurazaaqmohammed.core.ui.base;
 
-import android.R;
 import android.content.Intent;
 import android.os.Bundle;
-import android.view.View;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 
 import io.github.abdurazaaqmohammed.core.ui.theme.ThemeRegistry;
 import io.github.abdurazaaqmohammed.core.ui.util.AppFont;
@@ -32,15 +27,9 @@ public abstract class BaseActivity extends AppCompatActivity {
         AppFont.installFactory(this);
         appliedFontEpoch = AppFont.currentEpoch();
         super.onCreate(savedInstanceState);
-        View content = getWindow().getDecorView().findViewById(R.id.content);
-        if (content != null){
-            ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
-                Insets sys = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-                v.setPadding(sys.left, sys.top, sys.right, sys.bottom);
-                return WindowInsetsCompat.CONSUMED;
-            });
-            ViewCompat.requestApplyInsets(content);
-        }
+        // Content insets (status bar/cutout padding, no bottom padding so the UI
+        // runs behind the transparent navigation bar) are applied globally from
+        // App's lifecycle callbacks; see SystemBars.applyContentInsets.
     }
 
     @Override

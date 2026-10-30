@@ -6,13 +6,20 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Build;
+import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
+import java.util.Map;
+import java.util.WeakHashMap;
+
+import io.github.abdurazaaqmohammed.MPManager.R;
 import io.github.abdurazaaqmohammed.core.ui.theme.BuiltInThemes;
 import io.github.abdurazaaqmohammed.core.ui.theme.ThemeRegistry;
 
@@ -21,19 +28,22 @@ import io.github.abdurazaaqmohammed.core.ui.theme.ThemeRegistry;
  * {@code App}'s activity lifecycle callbacks and to dialogs at their own
  * show/onStart entry points.
  *
- * <p>The navigation bar is hidden in sticky-immersive mode: content owns the
- * whole bottom edge, and a swipe from the bottom edge reveals the transient
- * bar again. That is the only treatment that keeps working on Android 15+,
- * where {@code Window#setNavigationBarColor} is ignored once the platform
- * enforces edge-to-edge — a merely transparent bar then falls back to the
- * window background and still reads as a black strip.
+ * <p>Layout is edge-to-edge: the window draws behind the system bars and its
+ * content is only inset at the top, so the app's own background continues
+ * behind the transparent navigation bar instead of a separately tinted strip.
+ * A view with id {@code bottomBar} keeps its bottom padding in step with the
+ * navigation-bar inset, so a bottom toolbar's background extends under the bar
+ * while its buttons stay above it.
  *
- * <p>While the transient bar is visible its colour is still transparent with
- * no divider and no contrast scrim, and the icon brightness follows the active
- * MP Manager theme rather than the system dark mode (the app can run Light on
- * a dark system, and Black on a light one).
+ * <p>Android 15+ already enforces edge-to-edge for applications targeting 35
+ * and later and ignores {@code Window#setNavigationBarColor}; the colour writes
+ * below therefore only matter on older releases, and the contrast scrim is
+ * switched off wherever the platform still honours it.
  */
 public final class SystemBars {
+
+    /** Original bottom padding of a padded bottom bar, keyed weakly. */
+    private static final Map<View, Integer> bottomBarBasePadding = new WeakHashMap<>();
 
     private SystemBars() {
     }
@@ -47,6 +57,9 @@ public final class SystemBars {
         if (activity == null || activity.isFinishing()) return;
         Window window = activity.getWindow();
         if (window == null) return;
+        // The app paints to the screen edges; content insets are applied by
+        // {@link #applyContentInsets(Activity)}.
+        WindowCompat.setDecorFitsSystemWindows(window, false);
         apply(window, isLightNavigationBar(activity));
     }
 
@@ -61,6 +74,43 @@ public final class SystemBars {
         Window window = dialog.getWindow();
         if (window == null) return;
         apply(window, isLightNavigationBar(dialog.getContext()));
+    }
+
+    /**
+     * Applies the window insets that the edge-to-edge layout needs: status bar
+     * and cutout on the top and sides, nothing at the bottom, so lists and
+     * backgrounds scroll behind the transparent navigation bar.
+     *
+     * <p>{@code R.id.bottomBar}, when the screen has one, is the exception: its
+     * background extends under the bar and its own padding grows by the
+     * navigation-bar inset, which keeps the buttons above the system bar.
+     */
+    public static void applyContentInsets(Activity activity) {
+        if (activity == null || activity.isFinishing()) return;
+        Window window = activity.getWindow();
+        if (window == null) return;
+        View content = window.getDecorView().findViewById(android.R.id.content);
+        if (content == null) return;
+        ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
+            Insets bars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            v.setPadding(bars.left, bars.top, bars.right, 0);
+            View bottomBar = v.findViewById(R.id.bottomBar);
+            if (bottomBar != null) {
+                Integer base = bottomBarBasePadding.get(bottomBar);
+                if (base == null) {
+                    base = bottomBar.getPaddingBottom();
+                    bottomBarBasePadding.put(bottomBar, base);
+                }
+                bottomBar.setPadding(
+                        bottomBar.getPaddingLeft(),
+                        bottomBar.getPaddingTop(),
+                        bottomBar.getPaddingRight(),
+                        base + bars.bottom);
+            }
+            return WindowInsetsCompat.CONSUMED;
+        });
+        ViewCompat.requestApplyInsets(content);
     }
 
     /**
@@ -87,28 +137,16 @@ public final class SystemBars {
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
             window.setNavigationBarColor(Color.TRANSPARENT);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                // The divider is drawn as a hairline on top of the bar; drop it so
-                // the transient bar does not turn into a visible line.
                 window.setNavigationBarDividerColor(Color.TRANSPARENT);
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Android 10+ dims the bar to keep contrast against app content.
-                // That scrim is exactly what makes a transparent bar read as a
-                // solid strip, so it must be off.
                 window.setNavigationBarContrastEnforced(false);
             }
         }
 
         WindowInsetsControllerCompat controller =
                 WindowCompat.getInsetsController(window, window.getDecorView());
-        if (controller == null) return;
-
-        // Sticky immersive: bars stay hidden, a bottom-edge swipe shows them
-        // transiently and they hide themselves again.
-        controller.setSystemBarsBehavior(
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-        controller.hide(WindowInsetsCompat.Type.navigationBars());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (controller != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             controller.setAppearanceLightNavigationBars(lightBars);
         }
     }
