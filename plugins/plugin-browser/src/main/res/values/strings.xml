@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plugin_label">内置浏览器</string>
+    <string name="url_hint">输入网址 / 搜索 / 本地路径</string>
+    <string name="go">前往</string>
+    <string name="back">后退</string>
+    <string name="forward">前进</string>
+    <string name="reload">刷新</string>
+    <string name="home">主页</string>
+    <string name="download_started">已开始下载</string>
+    <string name="download_failed">下载失败</string>
+</resources>
