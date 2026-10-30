@@ -1,7 +1,8 @@
 name: Release
 
 # Publishing a release is a tag push: `git tag 1.2.0 && git push origin 1.2.0`.
-# See docs/RELEASING.md for the one-time secret setup.
+# Without the signing secrets the workflow still publishes an installable
+# debug-signed APK and says so in the notes; see docs/RELEASING.md.
 on:
   push:
     tags:
@@ -37,37 +38,55 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
 
-      - name: Check tag against versionName
+      - name: Resolve tag and version
+        id: meta
         run: |
           set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
           version="$(sed -n 's/^[[:space:]]*versionName[[:space:]]*"\(.*\)"/\1/p' app/build.gradle)"
-          tag="${GITHUB_REF_NAME#v}"
           if [ -z "$version" ]; then
             echo "::error::could not read versionName from app/build.gradle"
             exit 1
           fi
-          if [ "$version" != "$tag" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match versionName $version in app/build.gradle"
+          if [ -n "$tag" ] && [ "${tag#v}" != "$version" ]; then
+            echo "::error::tag ${tag} does not match versionName ${version} in app/build.gradle"
             exit 1
           fi
-          echo "Releasing MP-Manager $version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build release APK
-        run: ./gradlew --no-daemon --stacktrace assembleRelease
-
-      - name: Prepare signing key
+      - name: Detect signing secrets
+        id: signing
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-          if [ -z "${KEYSTORE_BASE64:-}" ]; then
-            echo "::error::RELEASE_KEYSTORE_BASE64 is not configured - see docs/RELEASING.md"
-            exit 1
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "mode=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=debug" >> "$GITHUB_OUTPUT"
+            echo "::notice::No release keystore configured - publishing a debug-signed APK. See docs/RELEASING.md."
           fi
+
+      - name: Build release APK
+        if: steps.signing.outputs.mode == 'release'
+        run: ./gradlew --no-daemon --stacktrace assembleRelease
+
+      - name: Build debug APK
+        if: steps.signing.outputs.mode == 'debug'
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Prepare signing key
+        if: steps.signing.outputs.mode == 'release'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
           echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
           test -s "$RUNNER_TEMP/release.keystore"
 
       - name: Zipalign and sign
+        if: steps.signing.outputs.mode == 'release'
         env:
           KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
@@ -85,25 +104,51 @@ jobs:
             exit 1
           fi
 
-          apk="MP-Manager-${GITHUB_REF_NAME#v}.apk"
           "${build_tools}/zipalign" -p -f 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
           "${build_tools}/apksigner" sign \
             --ks "$RUNNER_TEMP/release.keystore" \
             --ks-pass "env:KEYSTORE_PASSWORD" \
             --ks-key-alias "$KEY_ALIAS" \
             --key-pass "env:KEY_PASSWORD" \
-            --out "$apk" \
+            --out "$RUNNER_TEMP/signed.apk" \
             "$RUNNER_TEMP/aligned.apk"
-          "${build_tools}/apksigner" verify --print-certs "$apk"
-          echo "$apk" > "$RUNNER_TEMP/apk-name.txt"
+          "${build_tools}/apksigner" verify --print-certs "$RUNNER_TEMP/signed.apk"
+
+      - name: Collect APK
+        id: apk
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.version }}"
+          if [ "${{ steps.signing.outputs.mode }}" = "release" ]; then
+            cp "$RUNNER_TEMP/signed.apk" "MP-Manager-$version.apk"
+            echo "unsigned_note=false" >> "$GITHUB_OUTPUT"
+          else
+            src="$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)"
+            test -n "$src"
+            cp "$src" "MP-Manager-$version-debug.apk"
+            echo "unsigned_note=true" >> "$GITHUB_OUTPUT"
+          fi
+          ls -l MP-Manager-*.apk
 
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          UNSIGNED_NOTE: ${{ steps.apk.outputs.unsigned_note }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
-          apk="$(cat "$RUNNER_TEMP/apk-name.txt")"
-          gh release create "$GITHUB_REF_NAME" "$apk" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+          tag="${{ steps.meta.outputs.tag }}"
+          notes_file="$RUNNER_TEMP/notes.md"
+          {
+            if [ "$UNSIGNED_NOTE" = "true" ]; then
+              echo "> **This build is debug-signed.** No release keystore is configured for this repository, so the APK is signed with the standard debug key. It installs and runs normally, but future builds signed with a real release key will not upgrade over it. Add the four signing secrets described in \`docs/RELEASING.md\` to switch to release signing."
+              echo
+            fi
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="$tag" --jq .body
+          } > "$notes_file"
+
+          gh release create "$tag" MP-Manager-*.apk \
+            --title "MP Manager $VERSION" \
+            --notes-file "$notes_file" \
             --verify-tag

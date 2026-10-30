@@ -60,7 +60,6 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Locale;
-import java.util.function.Consumer;
 
 public class ClockTool extends BaseToolPlugin {
 
@@ -658,7 +657,7 @@ public class ClockTool extends BaseToolPlugin {
         return t;
     }
 
-    private void pickColor(String title, Consumer<Integer> setter) {
+    private void pickColor(String title, ColorSetter setter) {
         ColorWheelView wheel =
                 new ColorWheelView(host);
         LinearLayout root = new LinearLayout(host);
@@ -1122,6 +1121,14 @@ public class ClockTool extends BaseToolPlugin {
             paint.setStyle(Paint.Style.STROKE);
             canvas.drawLine(cx, cy, x, y, paint);
         }
+    }
+
+    /**
+     * java.util.function.Consumer is API 24; the pack supports API 19. A local
+     * interface keeps the lambda call sites unchanged and needs no desugaring.
+     */
+    private interface ColorSetter {
+        void accept(int color);
     }
 }
 

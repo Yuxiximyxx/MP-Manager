@@ -431,7 +431,7 @@ public final class DeviceSys {
                 if (sm != null) {
                     for (StorageVolume sv : sm.getStorageVolumes()) {
                         try {
-                            File dir = sv.getDirectory();
+                            File dir = volumeDirectory(sv);
                             if (dir == null) continue;
                             String p = dir.getAbsolutePath();
                             boolean dup = false;
@@ -461,6 +461,24 @@ public final class DeviceSys {
         } catch (Exception ignored) {
         }
         return out;
+    }
+
+    /**
+     * StorageVolume.getDirectory() is API 30. On 24-29 the path is only exposed
+     * through the hidden getPath(); reflection keeps removable volumes listed
+     * there and degrades to null instead of crashing if it is unavailable.
+     */
+    private static File volumeDirectory(StorageVolume sv) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return sv.getDirectory();
+        }
+        try {
+            java.lang.reflect.Method m = StorageVolume.class.getMethod("getPath");
+            Object path = m.invoke(sv);
+            return path instanceof String ? new File((String) path) : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static Volume statVolume(String label, String path, boolean removable) {
@@ -540,7 +558,7 @@ public final class DeviceSys {
                 b.health = bat.getIntExtra(BatteryManager.EXTRA_HEALTH, -1);
             }
             BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
-            if (bm != null) {
+            if (bm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 try {
                     b.currentUa = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
                 } catch (Exception ignored) {
