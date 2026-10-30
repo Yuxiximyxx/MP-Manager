@@ -12,13 +12,12 @@ android {
         minSdk 23
         targetSdk 37
         multiDexEnabled true
-        versionCode 13
-        versionName "1.2.0"
+        versionCode 14
+        versionName "1.2.1"
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
             minifyEnabled false
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
