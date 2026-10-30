@@ -468,6 +468,7 @@ public final class DeviceSys {
      * through the hidden getPath(); reflection keeps removable volumes listed
      * there and degrades to null instead of crashing if it is unavailable.
      */
+    @android.annotation.TargetApi(24)
     private static File volumeDirectory(StorageVolume sv) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return sv.getDirectory();
