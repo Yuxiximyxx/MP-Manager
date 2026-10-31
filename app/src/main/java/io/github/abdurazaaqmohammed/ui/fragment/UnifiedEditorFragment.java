@@ -149,6 +149,8 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
     private AdvancedSymbolInputView symbolInputView;
     private EditText searchInput, replaceInput;
     private View btnSearchPrev, btnSearchNext, btnReplaceToggle, btnSearchMenu, btnStopSearch;
+    private TextView searchCount;
+    private MaterialButton btnReplaceCurrent;
     private MaterialButton btnReplaceAll;
     //private SymbolInputView symbolInput;
     private ProgressBar loadingProgress;
@@ -289,6 +291,8 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
         replaceInput = view.findViewById(R.id.replace_input);
         btnSearchPrev = view.findViewById(R.id.btn_search_prev);
         btnSearchNext = view.findViewById(R.id.btn_search_next);
+        searchCount = view.findViewById(R.id.search_count);
+        btnReplaceCurrent = view.findViewById(R.id.btn_replace_current);
         btnReplaceToggle = view.findViewById(R.id.btn_replace_toggle);
         btnReplaceAll = view.findViewById(R.id.btn_replace_all);
         btnSearchMenu = view.findViewById(R.id.btn_search_menu);
@@ -403,6 +407,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
             }
         });
         btnReplaceAll.setOnClickListener(v -> performReplaceAll());
+        if (btnReplaceCurrent != null) btnReplaceCurrent.setOnClickListener(v -> performReplace());
         btnSearchMenu.setOnClickListener(v -> {
             PopupMenu popupMenu = new PopupMenu(requireContext(), btnSearchMenu);
             popupMenu.getMenu().add(0, 1, 0, R.string.regex).setCheckable(true).setChecked(regex);
@@ -831,6 +836,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
                     : wholeWord ? EditorSearcher.SearchOptions.TYPE_WHOLE_WORD
                     : EditorSearcher.SearchOptions.TYPE_NORMAL;
             startSearch(query.toString(), type, !matchCase, true);
+            refreshMatchCount(0);
         } catch (Exception e) {
             if (getContext() != null) new ErrorUtil(getActivity()).showError(e);
         }
@@ -874,7 +880,10 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
                 startSearch(query.toString(), type, ignoreCase, next);
                 return;
             }
-            if (next ? searcher.gotoNext() : searcher.gotoPrevious()) return;
+            if (next ? searcher.gotoNext() : searcher.gotoPrevious()) {
+                refreshMatchCount(0);
+                return;
+            }
             // Matches may still be computing right after a search; retry briefly
             // instead of restarting the search and losing the position.
             editor.postDelayed(() -> {
@@ -893,7 +902,10 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
 
     private void jumpWhenReady(EditorSearcher searcher, int attempt, boolean next) {
         if (!isAdded() || editor.getSearcher() != searcher) return;
-        if (next ? searcher.gotoNext() : searcher.gotoPrevious()) return;
+        if (next ? searcher.gotoNext() : searcher.gotoPrevious()) {
+            refreshMatchCount(0);
+            return;
+        }
         if (attempt >= 12) {
             Extensions.showMessage(requireActivity(), getString(R.string.no_matches_found));
             return;
@@ -904,6 +916,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
     private void performReplace() {
         if (!TextUtils.isEmpty(searchInput.getText())) try {
             editor.getSearcher().replaceCurrentMatch(replaceInput.getText().toString());
+            refreshMatchCount(0);
         } catch (Exception e) {
             if (getContext() != null) new ErrorUtil(getActivity()).showError(e);
         }
@@ -912,8 +925,53 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
     private void performReplaceAll() {
         if (!TextUtils.isEmpty(searchInput.getText())) try {
             editor.getSearcher().replaceAll(replaceInput.getText().toString());
+            refreshMatchCount(0);
         } catch (Exception e) {
             if (getContext() != null) new ErrorUtil(getActivity()).showError(e);
+        }
+    }
+
+    /** Opens the search bar with the selected text and jumps to the first hit. */
+    public void searchSelectedText(String text) {
+        if (editor == null || TextUtils.isEmpty(text)) return;
+        searchPanel.setVisibility(View.VISIBLE);
+        replaceMode = false;
+        if (replacePanel != null) replacePanel.setVisibility(View.GONE);
+        searchInput.setText(text);
+        searchInput.setSelection(searchInput.getText().length());
+        performSearch();
+    }
+
+    /** Opens the replace bar for the selected text. */
+    public void replaceSelectedText(String text) {
+        if (editor == null || TextUtils.isEmpty(text)) return;
+        searchSelectedText(text);
+        replaceMode = true;
+        if (replacePanel != null) replacePanel.setVisibility(View.VISIBLE);
+        if (replaceInput != null) {
+            replaceInput.requestFocus();
+            replaceInput.setSelection(replaceInput.getText().length());
+        }
+    }
+
+    /** Shows "current/total" for the running search; the searcher fills matches asynchronously. */
+    private void refreshMatchCount(int attempt) {
+        if (!isAdded() || editor == null || searchCount == null) return;
+        try {
+            EditorSearcher searcher = editor.getSearcher();
+            int total = searcher.getMatchedPositionCount();
+            int index = searcher.getCurrentMatchedPositionIndex();
+            if (total > 0) {
+                int current = index >= 0 ? index + 1 : 0;
+                searchCount.setText(current + "/" + total);
+                return;
+            }
+        } catch (Exception ignored) {
+        }
+        if (attempt < 12) {
+            editor.postDelayed(() -> refreshMatchCount(attempt + 1), 80);
+        } else if (searchCount != null) {
+            searchCount.setText("0/0");
         }
     }
 
@@ -1843,6 +1901,16 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
                 preferencesEditor.apply();
                 showAvailableTranslationDlg();
             }
+        }
+
+        @Override
+        public void onClickSearch(View view, String text) {
+            searchSelectedText(text);
+        }
+
+        @Override
+        public void onClickReplace(View view, String text) {
+            replaceSelectedText(text);
         }
 
         @Override

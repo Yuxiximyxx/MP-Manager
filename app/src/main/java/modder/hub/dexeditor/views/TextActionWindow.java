@@ -143,6 +143,10 @@ public class TextActionWindow extends EditorTextActionWindow implements View.OnL
 		void onClickGoTo(View view, String text);
 		void onClickTranslate(View view, String text);
 		void onLongClickTranslate(View view);
+		/** Search the selected text in the editor. */
+		default void onClickSearch(View view, String text) {}
+		/** Open replace for the selected text. */
+		default void onClickReplace(View view, String text) {}
 	}
 	
 	public interface ArscIdHandler {
@@ -223,6 +227,8 @@ public class TextActionWindow extends EditorTextActionWindow implements View.OnL
 			"{\"id\":\"goto_id_btn\",\"title\":\"Goto ID\",\"disabled\":false}," +
 			"{\"id\":\"goto_btn\",\"title\":\"Go To\",\"disabled\":false}," +
 			"{\"id\":\"translate_btn\",\"title\":\"Translate\",\"disabled\":false}," +
+			"{\"id\":\"search_btn\",\"title\":\"Search\",\"disabled\":false}," +
+			"{\"id\":\"replace_btn\",\"title\":\"Replace\",\"disabled\":false}," +
 			"{\"id\":\"panel_btn_cut\",\"title\":\"Cut\",\"disabled\":false}," +
 			"{\"id\":\"comment_btn\",\"title\":\"Toggle comment\",\"disabled\":false}," +
 			"{\"id\":\"openLink_btn\",\"title\":\"Open link\",\"disabled\":false}," +
@@ -246,6 +252,29 @@ public class TextActionWindow extends EditorTextActionWindow implements View.OnL
 					menuItems.add(item.getString("id"));
 				}
 			}
+			boolean addedSearchActions = false;
+			if (!menuItems.contains("search_btn") && !isMenuIdDisabled(jsonArray, "search_btn")) {
+				int idx = menuItems.indexOf("translate_btn");
+				menuItems.add(idx >= 0 ? idx + 1 : menuItems.size(), "search_btn");
+				try {
+					jsonArray.put(new JSONObject().put("id", "search_btn")
+							.put("title", "Search").put("disabled", false));
+				} catch (Exception ignored) {
+				}
+				addedSearchActions = true;
+			}
+			if (!menuItems.contains("replace_btn") && !isMenuIdDisabled(jsonArray, "replace_btn")) {
+				int idx = menuItems.indexOf("search_btn");
+				menuItems.add(idx >= 0 ? idx + 1 : menuItems.size(), "replace_btn");
+				try {
+					jsonArray.put(new JSONObject().put("id", "replace_btn")
+							.put("title", "Replace").put("disabled", false));
+				} catch (Exception ignored) {
+				}
+				addedSearchActions = true;
+			}
+			if (addedSearchActions) persistMenuItems(jsonArray);
+
 			if (!menuItems.contains("id_btn") || !menuItems.contains("goto_id_btn")) {
 				boolean allDisabledId = isMenuIdDisabled(jsonArray, "id_btn");
 				boolean allDisabledGotoId = isMenuIdDisabled(jsonArray, "goto_id_btn");
@@ -272,6 +301,8 @@ public class TextActionWindow extends EditorTextActionWindow implements View.OnL
 			menuItems.add("goto_id_btn");
 			menuItems.add("goto_btn");
 			menuItems.add("translate_btn");
+			menuItems.add("search_btn");
+			menuItems.add("replace_btn");
 			menuItems.add("panel_btn_cut");
 			menuItems.add("comment_btn");
 			menuItems.add("openLink_btn");
@@ -375,6 +406,8 @@ public class TextActionWindow extends EditorTextActionWindow implements View.OnL
 		allButtons.put("panel_btn_paste", new ButtonConfig(R.drawable.ic_paste_mt, android.R.string.paste));
 		allButtons.put("goto_btn", new ButtonConfig(R.drawable.ic_goto_mt, R.string.go_to));
 		allButtons.put("translate_btn", new ButtonConfig(R.drawable.ic_translate_mt, R.string.translate));
+		allButtons.put("search_btn", new ButtonConfig(R.drawable.baseline_search_24, R.string.search));
+		allButtons.put("replace_btn", new ButtonConfig(R.drawable.ic_replace_mt, R.string.replace));
 		allButtons.put("panel_btn_cut", new ButtonConfig(R.drawable.ic_cut_mt, android.R.string.cut));
 		allButtons.put("comment_btn", new ButtonConfig(R.drawable.ic_hash_mt, R.string.comment));
 		allButtons.put("openLink_btn", new ButtonConfig(R.drawable.ic_link_mt, R.string.link));
@@ -552,6 +585,24 @@ public class TextActionWindow extends EditorTextActionWindow implements View.OnL
 				this.selectedText = selectedText;
 				if (selectedText != null) {
 					this.actionCallback.onClickTranslate(view, selectedText);
+				}
+			}
+			break;
+			case "search_btn":
+			if (cursor.isSelected()) {
+				String selectedText = getSelectedText(this.codeEditor.getText(), cursor.getLeft(), cursor.getRight());
+				this.selectedText = selectedText;
+				if (selectedText != null) {
+					this.actionCallback.onClickSearch(view, selectedText);
+				}
+			}
+			break;
+			case "replace_btn":
+			if (cursor.isSelected()) {
+				String selectedText = getSelectedText(this.codeEditor.getText(), cursor.getLeft(), cursor.getRight());
+				this.selectedText = selectedText;
+				if (selectedText != null) {
+					this.actionCallback.onClickReplace(view, selectedText);
 				}
 			}
 			break;
