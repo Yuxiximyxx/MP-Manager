@@ -550,6 +550,12 @@
     <string name="sel_tl">Select a translation app first</string>
     <string name="invalid_line_number">Invalid line number: %1$s</string>
     <string name="stats">Statistics</string>
+    <string name="editor_chapters">Chapters</string>
+    <string name="editor_chapters_count">Chapters (%1$d)</string>
+    <string name="editor_no_chapters">No chapter headings found. Headings such as “Chapter 1” or “第1章” are recognized.</string>
+    <string name="editor_word_stats">Word count</string>
+    <string name="editor_novel_stats">Characters: %1$d\nLines: %2$d\nChapters: %3$d\nSelected: %4$d\n%5$s</string>
+    <string name="editor_large_file_mode">Large-file mode: highlighting and line numbers are off.</string>
     <string name="statss">Bytes: %1$d\nCharacters: %2$d\nWords: %3$d\nLines: %4$d</string>
     <string name="go">Go</string>
     <string name="available_tl">Available system translations</string>

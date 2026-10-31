@@ -434,6 +434,12 @@
     <string name="sel_tl">请先选择翻译应用</string>
     <string name="invalid_line_number">无效行号：%1$s</string>
     <string name="stats">统计</string>
+    <string name="editor_chapters">章节列表</string>
+    <string name="editor_chapters_count">章节（%1$d）</string>
+    <string name="editor_no_chapters">没有识别到章节标题。支持“第1章”“Chapter 1”“序章”“番外”等标题。</string>
+    <string name="editor_word_stats">字数统计</string>
+    <string name="editor_novel_stats">字符：%1$d\n行数：%2$d\n章节：%3$d\n选中：%4$d 字\n%5$s</string>
+    <string name="editor_large_file_mode">大文件模式：已关闭语法高亮和行号。</string>
     <string name="statss">字节：%1$d\n字符：%2$d\n单词：%3$d\n行：%4$d</string>
     <string name="go">转到</string>
     <string name="available_tl">可用的系统翻译</string>

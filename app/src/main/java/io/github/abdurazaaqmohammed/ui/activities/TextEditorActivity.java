@@ -52,6 +52,7 @@ import io.github.abdurazaaqmohammed.utils.AbxUtil;
 import io.github.abdurazaaqmohammed.utils.ErrorUtil;
 import io.github.abdurazaaqmohammed.utils.AccessManager;
 import io.github.abdurazaaqmohammed.utils.FileUtils;
+import io.github.abdurazaaqmohammed.utils.TextEncoding;
 import io.github.abdurazaaqmohammed.utils.ProgressManager;
 import io.github.abdurazaaqmohammed.utils.RootManager;
 import io.github.abdurazaaqmohammed.utils.UiPrefs;
@@ -83,6 +84,12 @@ public class TextEditorActivity extends BaseActivity implements UnifiedEditorFra
         volatile boolean loadFailed;
         boolean modified;
         boolean pendingArchiveUpdate;
+        /** Encoding of the file on disk; used when saving it back. */
+        String charset = TextEncoding.UTF8;
+        boolean bom;
+        String lineSeparator = "\n";
+        /** Forces a charset when the user asks to reload with a specific encoding. */
+        String explicitCharset;
         /**
          * Bumped whenever a load is started or superseded. A background read from
          * an earlier attempt compares against it before touching the tab, so a
@@ -297,6 +304,58 @@ public class TextEditorActivity extends BaseActivity implements UnifiedEditorFra
     private EditorTab getCurrentTab() {
         if (currentIndex >= 0 && currentIndex < tabs.size()) return tabs.get(currentIndex);
         return null;
+    }
+
+    /** Encoding that will be used the next time the current tab is saved. */
+    public String getCurrentCharsetName() {
+        EditorTab t = getCurrentTab();
+        return t == null ? TextEncoding.UTF8 : t.charset;
+    }
+
+    public void setCurrentCharset(String charsetName) {
+        EditorTab t = getCurrentTab();
+        if (t == null || charsetName == null || charsetName.isEmpty()) return;
+        t.charset = charsetName;
+        t.modified = true;
+        Extensions.showMessage(this, getString(R.string.encoding_set_to, charsetName));
+    }
+
+    public String getCurrentLineSeparator() {
+        EditorTab t = getCurrentTab();
+        return t == null ? "\n" : t.lineSeparator;
+    }
+
+    public void setCurrentLineSeparator(String separator) {
+        EditorTab t = getCurrentTab();
+        if (t == null || separator == null) return;
+        t.lineSeparator = separator;
+        t.modified = true;
+    }
+
+    /**
+     * Re-reads the current tab with {@code charsetName}, for files whose
+     * encoding was detected wrongly (typical for GBK novel downloads).
+     */
+    public void reloadCurrentTabWithCharset(String charsetName) {
+        EditorTab t = getCurrentTab();
+        if (t == null || t.axml || t.abx || charsetName == null) return;
+        t.explicitCharset = charsetName;
+        new Thread(() -> {
+            String text = readTabText(t, t.loadToken);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (text == null) {
+                    Extensions.showMessage(this, getString(R.string.encoding_set_to, charsetName));
+                    return;
+                }
+                t.content = text;
+                t.loaded = true;
+                t.modified = false;
+                UnifiedEditorFragment f = getFragment();
+                if (f != null) f.setText(text);
+                Extensions.showMessage(this, getString(R.string.encoding_set_to, charsetName));
+            });
+        }).start();
     }
 
     private void setupListeners() {
@@ -758,15 +817,17 @@ public class TextEditorActivity extends BaseActivity implements UnifiedEditorFra
                     return null;
                 }
             }
-            try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8);
-                 BufferedReader reader = new BufferedReader(isr)) {
-
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line).append('\n');
-                }
-                return sb.toString();
+            try {
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = bis.read(buf)) != -1) bos.write(buf, 0, n);
+                TextEncoding.Decoded decoded = TextEncoding.decode(bos.toByteArray(), tab.explicitCharset);
+                tab.explicitCharset = null;
+                tab.charset = decoded.charset;
+                tab.bom = decoded.bom;
+                tab.lineSeparator = decoded.lineSeparator;
+                return decoded.text;
             } catch (Exception e) {
                 return null;
             }
@@ -1051,7 +1112,7 @@ public class TextEditorActivity extends BaseActivity implements UnifiedEditorFra
     private byte[] encodeTabPayload(EditorTab tab, String text) throws Exception {
         if (tab.axml) return new aXMLEncoder().encodeString(text, this, tab.resEntries, tab.poolEncoding);
         if (tab.abx) return AbxUtil.encodeString(text);
-        return text.getBytes(StandardCharsets.UTF_8);
+        return TextEncoding.encode(text, tab.charset, tab.bom, tab.lineSeparator);
     }
 
     private void saveTabTextRoot(EditorTab tab, String text) {

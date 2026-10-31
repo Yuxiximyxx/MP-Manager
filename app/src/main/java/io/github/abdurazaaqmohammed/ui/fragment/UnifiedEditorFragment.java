@@ -19,6 +19,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -166,6 +167,10 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
     private String currentCharset = "UTF-8";
     private boolean saved = true;
     private boolean axml = false;
+    /** Plain-text novel mode: wrap on, no line numbers, no syntax colouring. */
+    private boolean novelMode = false;
+    private boolean largeFileMode = false;
+    private float textSizeSp = 14f;
 
     private boolean matchCase = false, regex = false, wholeWord = false, replaceMode = false;
     private String lastSearchQuery;
@@ -329,6 +334,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
 
         setupHeaderListeners();
         setupSearchListeners();
+        setupPinchZoom();
     }
 
     private void setupHeaderListeners() {
@@ -427,6 +433,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
         editor.subscribeEvent(ContentChangeEvent.class, (event, unsubscribe) -> {
             if (isInitializing) return;
             saved = false;
+            if (!isSmali) updateTextCursorInfo();
             Activity act = getActivity();
             if (act instanceof DexEditorActivity) {
                 ((DexEditorActivity) act).onContentModified(className);
@@ -449,6 +456,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
                 recordPosition(editor.getCursor().getLeftLine(), editor.getCursor().getLeftColumn());
             }
             if (isSmali) updateSmaliCursorInfo();
+            else updateTextCursorInfo();
         });
 
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -461,6 +469,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
 //            }
             if (initialContentText != null) {
                 editor.setText(initialContentText);
+                applyLargeFileMode(initialContentText.length());
                 postInitialize(false);
             } else if (isSmali) {
                 loadSmaliInBackground();
@@ -641,6 +650,12 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
             //if (symbolInputContainer != null) symbolInputContainer.setVisibility(View.GONE);
             if (linearHeader != null) linearHeader.setVisibility(View.GONE);
             editor.setEditable(false);
+        } else if (novelMode) {
+            if (linearHeader != null) linearHeader.setVisibility(View.VISIBLE);
+            editor.setEditorLanguage(new EmptyLanguage());
+            editor.setWordwrap(true);
+            editor.setLineNumberEnabled(false);
+            updateTextCursorInfo();
         } else {
             //if (symbolInputContainer != null) symbolInputContainer.setVisibility(View.GONE);
             if (linearHeader != null) linearHeader.setVisibility(View.GONE);
@@ -681,14 +696,26 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
         editor.setTypefaceLineNumber(typeface);
         savedFont = fontType;
         String fontSizeStr = editorPrefs.getString("font_size", editorPrefs.getString("pref_font_size", "14"));
-        try { editor.setTextSize(Float.parseFloat(fontSizeStr)); } catch (Exception ignored) {}
+        try {
+            textSizeSp = Float.parseFloat(fontSizeStr);
+            editor.setTextSize(textSizeSp);
+        } catch (Exception ignored) {}
         int tabSize = Integer.parseInt(editorPrefs.getString("pref_tab_size", "4"));
         editor.setTabWidth(tabSize);
         boolean showLineNumbers = editorPrefs.getBoolean("show_line_numbers", editorPrefs.getBoolean("pref_show_line_numbers", true));
-        editor.setLineNumberEnabled(showLineNumbers);
         // The options-menu toggle stores "wrap_text"; fall back to the legacy
         // "pref_word_wrap" key so either one sticks across onResume/minimize.
         boolean wordWrap = editorPrefs.getBoolean("wrap_text", editorPrefs.getBoolean("pref_word_wrap", false));
+        if (novelMode) {
+            // Novel defaults only until the user flips the toggles themselves.
+            if (!editorPrefs.contains("show_line_numbers") && !editorPrefs.contains("pref_show_line_numbers")) {
+                showLineNumbers = false;
+            }
+            if (!editorPrefs.contains("wrap_text") && !editorPrefs.contains("pref_word_wrap")) {
+                wordWrap = true;
+            }
+        }
+        editor.setLineNumberEnabled(showLineNumbers);
         editor.setWordwrap(wordWrap);
     }
 
@@ -710,6 +737,7 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
     public void setText(CharSequence text) {
         if (editor != null) {
             editor.setText(text);
+            applyLargeFileMode(text == null ? 0 : text.length());
             isInitializing = false;
         } else {
             initialContentText = text != null ? text.toString() : null;
@@ -1145,8 +1173,14 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
         int smaliOffset = isSmali ? 3 : 0;
         int prefIndex = 10 + smaliOffset;
         int closeIndex = 11 + smaliOffset;
+        popupMenu.getMenu().add(0, 100, 0, getString(R.string.editor_chapters)).setIcon(R.drawable.ic_navigation);
+        popupMenu.getMenu().add(0, 101, 0, getString(R.string.editor_word_stats)).setIcon(R.drawable.baseline_text_snippet_24);
+        popupMenu.getMenu().add(0, 102, 0, getString(R.string.set_encoding)).setIcon(R.drawable.baseline_settings_24);
         popupMenu.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
+            if (id == 100) { showChapterList(); return true; }
+            if (id == 101) { showStatistics(); return true; }
+            if (id == 102) { showCharsetDialog(false); return true; }
             if (id == 0) { showSubFileMenu(anchor); }
             else if (id == 1) { searchPanel.setVisibility(View.VISIBLE); }
             else if (id == 2) { showSyntaxDialog(); }
@@ -1252,7 +1286,32 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
     /** Sets the real file name used to auto-detect the syntax, then re-applies it. */
     public void setFileName(String name) {
         this.fileName = name;
-        if (editor != null) applyAutoSyntax();
+        novelMode = isNovelFileName(name);
+        if (editor != null) {
+            applyAutoSyntax();
+            applyNovelState();
+        }
+    }
+
+    private static boolean isNovelFileName(String name) {
+        if (name == null) return false;
+        String n = name.trim().toLowerCase(Locale.ROOT);
+        return n.endsWith(".txt") || n.endsWith(".text") || n.endsWith(".log")
+                || n.endsWith(".md") || n.endsWith(".markdown");
+    }
+
+    /** Plain-text defaults for novels: wrap on, line numbers off, no colouring. */
+    private void applyNovelState() {
+        if (isSmali || editor == null) return;
+        if (linearHeader != null) {
+            linearHeader.setVisibility(novelMode ? View.VISIBLE : View.GONE);
+        }
+        if (novelMode) {
+            editor.setWordwrap(true);
+            editor.setLineNumberEnabled(false);
+            editor.setEditorLanguage(new EmptyLanguage());
+            updateTextCursorInfo();
+        }
     }
 
     /** Re-detects and applies highlighting from the current file name / axml flag. */
@@ -1402,11 +1461,26 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
     }
 
     private void showCharsetDialog(boolean reload) {
+        Activity activity = getActivity();
+        boolean wired = activity instanceof TextEditorActivity;
+        int checked = 0;
+        if (wired) {
+            String current = ((TextEditorActivity) activity).getCurrentCharsetName();
+            for (int i = 0; i < CHARSETS.length; i++) {
+                if (CHARSETS[i].equalsIgnoreCase(current)) checked = i;
+            }
+        }
         new MaterialAlertDialogBuilder(requireContext())
                 .setTitle(getString(reload ? R.string.reload_with_charset : R.string.set_encoding))
-                .setItems(CHARSETS, (dialog, which) -> {
+                .setSingleChoiceItems(CHARSETS, checked, (dialog, which) -> {
                     currentCharset = CHARSETS[which];
-                    Extensions.showMessage(requireActivity(), getString(R.string.encoding_set_to, currentCharset));
+                    dialog.dismiss();
+                    if (wired) {
+                        if (reload) ((TextEditorActivity) activity).reloadCurrentTabWithCharset(currentCharset);
+                        else ((TextEditorActivity) activity).setCurrentCharset(currentCharset);
+                    } else {
+                        Extensions.showMessage(requireActivity(), getString(R.string.encoding_set_to, currentCharset));
+                    }
                 })
                 .show();
     }
@@ -1417,6 +1491,11 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
                 .setItems(LINEBREAKS, (dialog, which) -> {
                     LineSeparator ls = which == 0 ? LineSeparator.LF : which == 1 ? LineSeparator.CRLF : LineSeparator.CR;
                     editor.setLineSeparator(ls);
+                    Activity activity = getActivity();
+                    if (activity instanceof TextEditorActivity) {
+                        String sep = which == 0 ? "\n" : which == 1 ? "\r\n" : "\r";
+                        ((TextEditorActivity) activity).setCurrentLineSeparator(sep);
+                    }
                     Extensions.showMessage(requireActivity(), getString(R.string.linebreak_type_set_to, LINEBREAKS[which]));
                 })
                 .show();
@@ -1428,11 +1507,113 @@ public class UnifiedEditorFragment extends Fragment implements SmaliMethodFieldL
         int chars = text.length();
         int words = text.isEmpty() ? 0 : text.trim().split("\\s+").length;
         int lines = editor.getLineCount();
+        if (novelMode) {
+            Cursor c = editor.getCursor();
+            int selected = c.isSelected() ? c.getRight() - c.getLeft() : 0;
+            String message = getString(R.string.editor_novel_stats,
+                    chars, lines, collectChapters().size(), selected,
+                    largeFileMode ? getString(R.string.editor_large_file_mode) : "");
+            new MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(R.string.editor_word_stats)
+                    .setMessage(message)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+            return;
+        }
         new MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.stats)
                 .setMessage(getString(R.string.statss, bytes, chars, words, lines))
                 .setPositiveButton(android.R.string.ok, null)
                 .show();
+    }
+
+    private java.util.List<int[]> collectChapters() {
+        java.util.List<int[]> chapters = new java.util.ArrayList<>();
+        if (editor == null) return chapters;
+        Pattern pattern = Pattern.compile(
+                "^\\s*(第[0-9零一二三四五六七八九十百千万两〇]+[章节回卷集部篇]|序章|楔子|引子|前言|后记|番外|尾声|终章|Chapter\\s+[0-9]+|CHAPTER\\s+[0-9]+).*");
+        Content content = editor.getText();
+        for (int line = 0; line < content.getLineCount(); line++) {
+            String lineText = content.getLineString(line);
+            if (lineText != null && pattern.matcher(lineText).matches()) {
+                chapters.add(new int[]{line});
+            }
+        }
+        return chapters;
+    }
+
+    private void showChapterList() {
+        java.util.List<int[]> chapters = collectChapters();
+        if (chapters.isEmpty()) {
+            new MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(R.string.editor_chapters)
+                    .setMessage(R.string.editor_no_chapters)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+            return;
+        }
+        String[] titles = new String[chapters.size()];
+        Content content = editor.getText();
+        for (int i = 0; i < chapters.size(); i++) {
+            int line = chapters.get(i)[0];
+            titles[i] = content.getLineString(line) != null ? content.getLineString(line).trim() : String.valueOf(line + 1);
+        }
+        new MaterialAlertDialogBuilder(requireContext())
+                .setTitle(getString(R.string.editor_chapters_count, chapters.size()))
+                .setItems(titles, (dialog, which) -> {
+                    recordPosition(editor.getCursor().getLeftLine(), editor.getCursor().getLeftColumn());
+                    editor.setSelection(chapters.get(which)[0], 0);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void updateTextCursorInfo() {
+        if (isSmali || editor == null) return;
+        Cursor c = editor.getCursor();
+        StringBuilder position = new StringBuilder();
+        position.append(c.getLeftLine() + 1).append(':').append(c.getLeftColumn() + 1);
+        if (c.isSelected()) position.append(" (").append(Math.abs(c.getRight() - c.getLeft())).append(')');
+        if (textviewLineNo != null) textviewLineNo.setText(position.toString());
+        if (methodName != null) {
+            String charset = currentCharset;
+            Activity act = getActivity();
+            if (act instanceof TextEditorActivity) charset = ((TextEditorActivity) act).getCurrentCharsetName();
+            methodName.setText(charset + " · " + editor.getText().length() + " 字");
+        }
+    }
+
+    private void applyLargeFileMode(int length) {
+        largeFileMode = length > 1_500_000;
+        if (largeFileMode && editor != null) {
+            editor.setLineNumberEnabled(false);
+            editor.setEditorLanguage(new EmptyLanguage());
+        }
+    }
+
+    private void setupPinchZoom() {
+        ScaleGestureDetector detector = new ScaleGestureDetector(requireContext(),
+                new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    private float startSize;
+
+                    @Override
+                    public boolean onScaleBegin(ScaleGestureDetector d) {
+                        startSize = textSizeSp;
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onScale(ScaleGestureDetector d) {
+                        float next = Math.max(8f, Math.min(40f, startSize * d.getScaleFactor()));
+                        textSizeSp = next;
+                        editor.setTextSize(next);
+                        return true;
+                    }
+                });
+        editor.setOnTouchListener((v, event) -> {
+            detector.onTouchEvent(event);
+            return false;
+        });
     }
 
         private void copySelection() {
